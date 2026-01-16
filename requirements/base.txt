@@ -37,7 +37,7 @@ djangorestframework-simplejwt==5.5.1  # https://pypi.org/project/djangorestframe
 drf-spectacular==0.29.0  # https://github.com/tfranzel/drf-spectacular
 
 # Unfold admin
-django-unfold==0.75.0  # https://pypi.org/project/django-unfold/
+django-unfold==0.76.0  # https://pypi.org/project/django-unfold/
 
 # Django solo
 django-solo==2.5.1  # https://github.com/lazybird/django-solo
