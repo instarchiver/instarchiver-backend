@@ -9,17 +9,10 @@ jobs:
   Deploying:
     runs-on: ubuntu-latest
     steps:
-      - name: Setup Tailscale
-        uses: tailscale/github-action@v4
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci
-
       - name: Executing Remote SSH Commands Using Password
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ secrets.SSH_HOST_TAILSCALE }}
+          host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME}}
           password: ${{ secrets.SSH_PASSWORD}}
           port: 22
