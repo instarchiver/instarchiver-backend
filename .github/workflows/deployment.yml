@@ -85,13 +85,16 @@ jobs:
             PACKAGE_NAME="${REPO_NAME}%2F${PACKAGE}"
             echo "Setting ${PACKAGE} to public..."
 
-            # Try to set visibility, ignore errors if already public or doesn't exist yet
-            gh api \
+            # Try to set visibility; log errors if the command fails (may already be public or not exist yet)
+            if ! OUTPUT=$(gh api \
               --method PATCH \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "/orgs/${OWNER}/packages/container/${PACKAGE_NAME}" \
-              -f visibility='public' || echo "Could not set ${PACKAGE} to public (may already be public)"
+              -f visibility='public' 2>&1); then
+              echo "Could not set ${PACKAGE} to public (may already be public or not exist yet). Details:"
+              echo "${OUTPUT}"
+            fi
           done
 
   deploy:
