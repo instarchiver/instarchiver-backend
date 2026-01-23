@@ -5,24 +5,134 @@ on:
     tags:
       - "*.*.*.*"
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
-  Deploying:
+  build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - name: Executing Remote SSH Commands Using Password
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Django
+        id: meta-django
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/django
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push Django image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./compose/production/django/Dockerfile
+          push: true
+          tags: ${{ steps.meta-django.outputs.tags }}
+          labels: ${{ steps.meta-django.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/django:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/django:buildcache,mode=max
+
+      - name: Extract metadata for Postgres
+        id: meta-postgres
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/postgres
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push Postgres image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./compose/production/postgres/Dockerfile
+          push: true
+          tags: ${{ steps.meta-postgres.outputs.tags }}
+          labels: ${{ steps.meta-postgres.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/postgres:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/postgres:buildcache,mode=max
+
+      - name: Extract metadata for Nginx
+        id: meta-nginx
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/nginx
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push Nginx image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./compose/production/nginx/Dockerfile
+          push: true
+          tags: ${{ steps.meta-nginx.outputs.tags }}
+          labels: ${{ steps.meta-nginx.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/nginx:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/nginx:buildcache,mode=max
+
+      - name: Extract metadata for AWS CLI
+        id: meta-awscli
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/awscli
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push AWS CLI image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./compose/production/aws/Dockerfile
+          push: true
+          tags: ${{ steps.meta-awscli.outputs.tags }}
+          labels: ${{ steps.meta-awscli.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/awscli:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/awscli:buildcache,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to production server
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME}}
-          password: ${{ secrets.SSH_PASSWORD}}
+          username: ${{ secrets.SSH_USERNAME }}
+          password: ${{ secrets.SSH_PASSWORD }}
           port: 22
           command_timeout: 1337m
           script_stop: true
           script: |
             cd ${{ secrets.REPOSITORY_LOCATION }}
             git pull origin master --force
-            docker compose -f docker-compose.production.yml build
-            docker compose -f docker-compose.production.yml stop
-            docker compose -f docker-compose.production.yml up -d
-            docker compose -f docker-compose.production.yml run --rm django python manage.py migrate
-            docker builder prune --force
+            docker compose -f docker-compose.ghcr.yml pull
+            docker compose -f docker-compose.ghcr.yml stop
+            docker compose -f docker-compose.ghcr.yml up -d
+            docker compose -f docker-compose.ghcr.yml run --rm django python manage.py migrate
+            docker image prune --force
