@@ -79,23 +79,27 @@ jobs:
           # Set visibility for all container packages belonging to this repository to public
           OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.repository.name }}"
+          FULL_REPO="${OWNER}/${REPO_NAME}"
 
-          echo "Retrieving container packages for ${OWNER}/${REPO_NAME}..."
+          echo "Retrieving container packages for ${FULL_REPO}..."
 
+          # Fetch all container packages from the organization
           PACKAGE_NAMES=$(gh api \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "/orgs/${OWNER}/packages?package_type=container&per_page=100" \
-            --jq '.[].name')
+            --jq '.[].name' 2>/dev/null || echo "")
 
           if [ -z "${PACKAGE_NAMES}" ]; then
-            echo "No container packages found for ${OWNER}/${REPO_NAME}."
+            echo "No container packages found for ${FULL_REPO}."
             exit 0
           fi
 
-          for FULL_NAME in ${PACKAGE_NAMES}; do
+          # Process each package name
+          while IFS= read -r FULL_NAME; do
+            # Only process packages that belong to this repository
             case "${FULL_NAME}" in
-              "${REPO_NAME}/"*)
+              "${FULL_REPO}/"*)
                 # Encode "/" as "%2F" for the API path segment
                 PACKAGE_PATH_ENCODED="${FULL_NAME//\//%2F}"
                 echo "Setting ${FULL_NAME} to public..."
@@ -115,7 +119,7 @@ jobs:
                 # Skip packages that do not belong to this repository
                 ;;
             esac
-          done
+          done <<< "${PACKAGE_NAMES}"
 
   deploy:
     needs: set-visibility
