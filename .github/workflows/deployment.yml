@@ -87,7 +87,7 @@ jobs:
             exit 1
           fi
 
-          if ! printf '%s\n' "${REPO_NAME}" | grep -Eq '^[A-Za-z0-9_-]+$'; then
+          if ! printf '%s\n' "${REPO_NAME}" | grep -Eq '^[A-Za-z0-9._-]+$'; then
             echo "Error: Invalid repository name '${REPO_NAME}'."
             exit 1
           fi
