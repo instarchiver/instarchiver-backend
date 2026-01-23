@@ -132,7 +132,6 @@ jobs:
             cd ${{ secrets.REPOSITORY_LOCATION }}
             git pull origin master --force
             docker compose -f docker-compose.ghcr.yml pull
-            docker compose -f docker-compose.ghcr.yml stop
             docker compose -f docker-compose.ghcr.yml up -d
             docker compose -f docker-compose.ghcr.yml run --rm django python manage.py migrate
             docker image prune -a --force
