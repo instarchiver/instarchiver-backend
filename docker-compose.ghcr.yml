@@ -1,0 +1,69 @@
+volumes:
+  instarchiver_production_postgres_data: {}
+  instarchiver_production_postgres_data_backups: {}
+  instarchiver_production_traefik: {}
+  instarchiver_production_django_media: {}
+  instarchiver_production_redis_data: {}
+
+
+services:
+  django: &django
+    image: ghcr.io/instarchiver/instarchiver-backend/django:latest
+    volumes:
+      - instarchiver_production_django_media:/app/core/media
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - ./.envs/.production/.django
+      - ./.envs/.production/.postgres
+    command: /start
+
+  postgres:
+    image: ghcr.io/instarchiver/instarchiver-backend/postgres:latest
+    ports:
+      - 100.86.58.86:65432:5432
+    volumes:
+      - instarchiver_production_postgres_data:/var/lib/postgresql/data
+      - instarchiver_production_postgres_data_backups:/backups
+    env_file:
+      - ./.envs/.production/.postgres
+
+  redis:
+    image: docker.io/redis:6
+    volumes:
+      - instarchiver_production_redis_data:/data
+    ports:
+      - 100.86.58.86:64202:6379
+
+
+  celeryworker:
+    <<: *django
+    image: ghcr.io/instarchiver/instarchiver-backend/django:latest
+    command: /start-celeryworker
+
+  celerybeat:
+    <<: *django
+    image: ghcr.io/instarchiver/instarchiver-backend/django:latest
+    command: /start-celerybeat
+
+  flower:
+    <<: *django
+    image: ghcr.io/instarchiver/instarchiver-backend/django:latest
+    command: /start-flower
+
+  nginx:
+    image: ghcr.io/instarchiver/instarchiver-backend/nginx:latest
+    depends_on:
+      - django
+    volumes:
+      - instarchiver_production_django_media:/usr/share/nginx/media:ro
+    ports:
+      - 100.86.58.86:64001:80
+
+  awscli:
+    image: ghcr.io/instarchiver/instarchiver-backend/awscli:latest
+    env_file:
+      - ./.envs/.production/.django
+    volumes:
+      - instarchiver_production_postgres_data_backups:/backups:z
