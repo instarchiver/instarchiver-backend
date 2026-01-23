@@ -5,6 +5,8 @@ on:
     tags:
       - "*.*.*.*"
 
+run-name: "Deploy ${{ github.ref_name }} to Production"
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -15,6 +17,19 @@ jobs:
     permissions:
       contents: read
       packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: django
+            dockerfile: ./compose/production/django/Dockerfile
+          - name: postgres
+            dockerfile: ./compose/production/postgres/Dockerfile
+          - name: nginx
+            dockerfile: ./compose/production/nginx/Dockerfile
+          - name: awscli
+            dockerfile: ./compose/production/aws/Dockerfile
 
     steps:
       - name: Checkout repository
@@ -30,92 +45,100 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for Django
-        id: meta-django
+      - name: Extract metadata for ${{ matrix.name }}
+        id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/django
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.name }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      - name: Build and push Django image
+      - name: Build and push ${{ matrix.name }} image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./compose/production/django/Dockerfile
+          file: ${{ matrix.dockerfile }}
           push: true
-          tags: ${{ steps.meta-django.outputs.tags }}
-          labels: ${{ steps.meta-django.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/django:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/django:buildcache,mode=max
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.name }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.name }}:buildcache,mode=max
 
-      - name: Extract metadata for Postgres
-        id: meta-postgres
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/postgres
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+  set-visibility:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
 
-      - name: Build and push Postgres image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./compose/production/postgres/Dockerfile
-          push: true
-          tags: ${{ steps.meta-postgres.outputs.tags }}
-          labels: ${{ steps.meta-postgres.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/postgres:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/postgres:buildcache,mode=max
+    steps:
+      - name: Set package visibility to public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Set visibility for all container packages belonging to this repository to public
+          OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.event.repository.name }}"
 
-      - name: Extract metadata for Nginx
-        id: meta-nginx
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/nginx
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+          # Validate OWNER and REPO_NAME to avoid unsafe characters in shell/API usage
+          if ! printf '%s\n' "${OWNER}" | grep -Eq '^[A-Za-z0-9_-]+$'; then
+            echo "Error: Invalid repository owner '${OWNER}'."
+            exit 1
+          fi
 
-      - name: Build and push Nginx image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./compose/production/nginx/Dockerfile
-          push: true
-          tags: ${{ steps.meta-nginx.outputs.tags }}
-          labels: ${{ steps.meta-nginx.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/nginx:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/nginx:buildcache,mode=max
+          if ! printf '%s\n' "${REPO_NAME}" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+            echo "Error: Invalid repository name '${REPO_NAME}'."
+            exit 1
+          fi
 
-      - name: Extract metadata for AWS CLI
-        id: meta-awscli
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/awscli
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+          echo "Retrieving container packages for ${OWNER}/${REPO_NAME}..."
 
-      - name: Build and push AWS CLI image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./compose/production/aws/Dockerfile
-          push: true
-          tags: ${{ steps.meta-awscli.outputs.tags }}
-          labels: ${{ steps.meta-awscli.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/awscli:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/awscli:buildcache,mode=max
+          # Fetch container packages (limited to first 100)
+          # Note: If more than 100 packages exist, pagination logic would need to be
+          # added using Link headers or page parameter.
+          PACKAGE_NAMES=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/orgs/${OWNER}/packages?package_type=container&per_page=100" \
+            --jq '.[].name')
+
+          if [ -z "${PACKAGE_NAMES}" ]; then
+            echo "No container packages found for ${OWNER}/${REPO_NAME}."
+            exit 0
+          fi
+
+          # Process each package name (quote variable to handle spaces/special chars)
+          while IFS= read -r FULL_NAME; do
+            # Skip empty lines
+            [ -z "${FULL_NAME}" ] && continue
+
+            # Match packages for this repository (handles both "repo/name" and "owner/repo/name" patterns)
+            case "${FULL_NAME}" in
+              "${REPO_NAME}/"* | "${OWNER}/${REPO_NAME}/"*)
+                # Encode "/" as "%2F" for the API path segment
+                PACKAGE_PATH_ENCODED="${FULL_NAME//\//%2F}"
+                echo "Setting ${FULL_NAME} to public..."
+
+                # Try to set visibility, ignore errors if already public or doesn't exist yet
+                if ! OUTPUT=$(gh api \
+                  --method PATCH \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "/orgs/${OWNER}/packages/container/${PACKAGE_PATH_ENCODED}" \
+                  -f visibility="public" 2>&1); then
+                  echo "Could not set ${FULL_NAME} to public (may already be public or not editable). Details:"
+                  echo "${OUTPUT}"
+                fi
+                ;;
+              *)
+                # Skip packages that do not belong to this repository
+                ;;
+            esac
+          done <<< "${PACKAGE_NAMES}"
 
   deploy:
-    needs: build-and-push
+    needs: set-visibility
     runs-on: ubuntu-latest
 
     steps:

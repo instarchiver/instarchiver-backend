@@ -7,12 +7,14 @@ env:
 
 on:
   pull_request:
-    branches: ['master']
-    paths-ignore: ['docs/**']
+    branches: ["master"]
+    paths-ignore: ["docs/**"]
 
   push:
-    branches: ['master']
-    paths-ignore: ['docs/**']
+    branches: ["master"]
+    paths-ignore: ["docs/**"]
+
+run-name: "CI - ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || format('Push to {0}', github.ref_name) }}"
 
 concurrency:
   group: ${{ github.head_ref || github.run_id }}
@@ -28,7 +30,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: '.python-version'
+          python-version-file: ".python-version"
       # Consider using pre-commit.ci for open source project
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
