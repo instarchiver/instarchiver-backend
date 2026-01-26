@@ -92,6 +92,20 @@ jobs:
             exit 1
           fi
 
+          # Detect if owner is an organization or personal account
+          echo "Detecting account type for ${OWNER}..."
+          OWNER_TYPE=$(gh api "/users/${OWNER}" --jq '.type')
+
+          if [ "$OWNER_TYPE" = "Organization" ]; then
+            PACKAGES_ENDPOINT="/orgs/${OWNER}/packages"
+            PACKAGE_ENDPOINT_PREFIX="/orgs/${OWNER}"
+            echo "Detected organization account: ${OWNER}"
+          else
+            PACKAGES_ENDPOINT="/user/packages"
+            PACKAGE_ENDPOINT_PREFIX="/user"
+            echo "Detected personal account: ${OWNER}"
+          fi
+
           echo "Retrieving container packages for ${OWNER}/${REPO_NAME}..."
 
           # Fetch container packages (limited to first 100)
@@ -100,7 +114,7 @@ jobs:
           PACKAGE_NAMES=$(gh api \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/orgs/${OWNER}/packages?package_type=container&per_page=100" \
+            "${PACKAGES_ENDPOINT}?package_type=container&per_page=100" \
             --jq '.[].name')
 
           if [ -z "${PACKAGE_NAMES}" ]; then
@@ -125,7 +139,7 @@ jobs:
                   --method PATCH \
                   -H "Accept: application/vnd.github+json" \
                   -H "X-GitHub-Api-Version: 2022-11-28" \
-                  "/orgs/${OWNER}/packages/container/${PACKAGE_PATH_ENCODED}" \
+                  "${PACKAGE_ENDPOINT_PREFIX}/packages/container/${PACKAGE_PATH_ENCODED}" \
                   -f visibility="public" 2>&1); then
                   echo "Could not set ${FULL_NAME} to public (may already be public or not editable). Details:"
                   echo "${OUTPUT}"
