@@ -9,7 +9,7 @@ django-celery-beat==2.8.1  # https://github.com/celery/django-celery-beat
 flower==2.0.1  # https://github.com/mher/flower
 uvicorn[standard]==0.40.0  # https://github.com/encode/uvicorn
 uvicorn-worker==0.4.0  # https://github.com/Kludex/uvicorn-worker
-boto3==1.42.33  # https://github.com/boto/boto3
+boto3==1.42.34  # https://github.com/boto/boto3
 Pygments==2.19.2  # https://pygments.org/
 
 # Django
