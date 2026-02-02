@@ -24,7 +24,7 @@ django-redis==6.0.0  # https://github.com/jazzband/django-redis
 django-simple-history==3.11.0  # https://django-simple-history.readthedocs.io/en/stable/index.html
 django-storages==1.14.6  # https://github.com/jschneier/django-storages
 django-celery-results==2.6.0  # https://django-celery-results.readthedocs.io/en/latest/
-django-health-check==3.20.8  # https://pypi.org/project/django-health-check/
+django-health-check==3.21.0  # https://pypi.org/project/django-health-check/
 django-filter==25.2  # https://github.com/carltongibson/django-filter
 django-extensions==4.1  # https://github.com/django-extensions/django-extensions
 pgvector==0.4.2  # https://github.com/pgvector/pgvector
