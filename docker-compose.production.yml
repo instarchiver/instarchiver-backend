@@ -29,7 +29,7 @@ services:
       dockerfile: ./compose/production/postgres/Dockerfile
     image: instarchiver_production_postgres
     ports:
-      - 100.86.58.86:65432:5432
+      - 100.73.60.108:65432:5432
     volumes:
       - instarchiver_production_postgres_data:/var/lib/postgresql/data
       - instarchiver_production_postgres_data_backups:/backups
@@ -41,7 +41,7 @@ services:
     volumes:
       - instarchiver_production_redis_data:/data
     ports:
-      - 100.86.58.86:64202:6379
+      - 100.73.60.108:64202:6379
 
 
   celeryworker:
@@ -69,7 +69,7 @@ services:
     volumes:
       - instarchiver_production_django_media:/usr/share/nginx/media:ro
     ports:
-      - 100.86.58.86:64001:80
+      - 100.73.60.108:64001:80
 
   awscli:
     build:
