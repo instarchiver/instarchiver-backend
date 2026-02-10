@@ -1,7 +1,7 @@
-# PostgreSQL
+# PostgreSQL (via PgBouncer)
 # ------------------------------------------------------------------------------
-POSTGRES_HOST=postgres
-POSTGRES_PORT=5432
+POSTGRES_HOST=pgbouncer
+POSTGRES_PORT=6432
 POSTGRES_DB=core
 POSTGRES_USER=vnBBpYtVKPRsqHnKsQjZGPPUBZcLpZam
 POSTGRES_PASSWORD=p9r7XZd0W2HlKsynjsv5yK8yy0iJ1fsmHJjkGB92j33bUfQfI8oCyQZv3Ay0LfVW

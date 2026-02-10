@@ -11,7 +11,7 @@ services:
     image: instarchiver_local_django
     container_name: instarchiver_local_django
     depends_on:
-      - postgres
+      - pgbouncer
       - redis
       - mailpit
     volumes:
@@ -49,13 +49,29 @@ services:
     volumes:
       - instarchiver_local_redis_data:/data
 
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: instarchiver_local_pgbouncer
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=200
+      - DEFAULT_POOL_SIZE=25
+      - MIN_POOL_SIZE=5
+      - RESERVE_POOL_SIZE=5
+      - SERVER_RESET_QUERY=DISCARD ALL
+    env_file:
+      - ./.envs/.local/.postgres
+    depends_on:
+      - postgres
+
   celeryworker:
     <<: *django
     image: instarchiver_local_celeryworker
     container_name: instarchiver_local_celeryworker
     depends_on:
       - redis
-      - postgres
+      - pgbouncer
       - mailpit
     ports: []
     command: /start-celeryworker
@@ -66,7 +82,7 @@ services:
     container_name: instarchiver_local_celerybeat
     depends_on:
       - redis
-      - postgres
+      - pgbouncer
       - mailpit
     ports: []
     command: /start-celerybeat
