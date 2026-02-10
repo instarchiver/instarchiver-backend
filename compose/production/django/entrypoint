@@ -12,6 +12,6 @@ export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES
 
 wait-for-it "${POSTGRES_HOST}:${POSTGRES_PORT}" -t 30
 
->&2 echo 'PostgreSQL is available'
+>&2 echo 'Database is available'
 
 exec "$@"
