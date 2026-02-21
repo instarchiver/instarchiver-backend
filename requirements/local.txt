@@ -13,7 +13,7 @@ pytest==9.0.2  # https://github.com/pytest-dev/pytest
 pytest-cov==7.0.0  # https://github.com/pytest-dev/pytest-cov
 pytest-sugar==1.1.1  # https://github.com/Teemu/pytest-sugar
 pytest-xdist==3.8.0  # https://github.com/pytest-dev/pytest-xdist
-djangorestframework-stubs==3.16.7  # https://github.com/typeddjango/djangorestframework-stubs
+djangorestframework-stubs==3.16.8  # https://github.com/typeddjango/djangorestframework-stubs
 
 # Documentation
 # ------------------------------------------------------------------------------
