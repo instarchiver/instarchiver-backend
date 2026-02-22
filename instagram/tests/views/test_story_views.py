@@ -1,3 +1,7 @@
+import hashlib
+import json
+
+from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
@@ -437,6 +441,98 @@ class StoryListViewTest(TestCase):
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data["results"]) == 10  # noqa: PLR2004
         assert response.data["next"] is not None
+
+    def _make_cache_key(self, params: dict) -> str:
+        """Helper to replicate the cache key logic from StoryListView."""
+        params_key = json.dumps(sorted(params.items()), sort_keys=True)
+        return f"story_list_{hashlib.md5(params_key.encode()).hexdigest()}"
+
+    def test_cache_miss_on_first_request(self):
+        """Test that first request doesn't find cache and creates it."""
+        cache.clear()
+        StoryFactory.create_batch(3)
+
+        cache_key = self._make_cache_key({})
+        assert cache.get(cache_key) is None
+
+        response = self.client.get(self.url)
+        assert response.status_code == status.HTTP_200_OK
+
+        cached_data = cache.get(cache_key)
+        assert cached_data is not None
+
+    def test_cache_hit_on_second_request(self):
+        """Test that second request to same URL uses cache."""
+        cache.clear()
+        StoryFactory.create_batch(3)
+
+        response1 = self.client.get(self.url)
+        assert response1.status_code == status.HTTP_200_OK
+
+        cache_key = self._make_cache_key({})
+        assert cache.get(cache_key) is not None
+
+        response2 = self.client.get(self.url)
+        assert response2.status_code == status.HTTP_200_OK
+
+        assert response1.data == response2.data
+
+    def test_cache_expires_after_ttl(self):
+        """Test that cache is regenerated after manual expiration."""
+        cache.clear()
+        StoryFactory.create_batch(3)
+
+        cache_key = self._make_cache_key({})
+
+        response1 = self.client.get(self.url)
+        assert response1.status_code == status.HTTP_200_OK
+        assert cache.get(cache_key) is not None
+
+        cache.delete(cache_key)
+        assert cache.get(cache_key) is None
+
+        response2 = self.client.get(self.url)
+        assert response2.status_code == status.HTTP_200_OK
+        assert cache.get(cache_key) is not None
+
+    def test_different_query_params_have_different_cache_keys(self):
+        """Test that different query params produce separate cache entries."""
+        cache.clear()
+        user1 = InstagramUserFactory(username="cacheuser1")
+        user2 = InstagramUserFactory(username="cacheuser2")
+        StoryFactory.create_batch(2, user=user1)
+        StoryFactory.create_batch(2, user=user2)
+
+        response_all = self.client.get(self.url)
+        response_user1 = self.client.get(self.url, {"user": str(user1.uuid)})
+
+        assert response_all.status_code == status.HTTP_200_OK
+        assert response_user1.status_code == status.HTTP_200_OK
+
+        cache_key_all = self._make_cache_key({})
+        cache_key_user1 = self._make_cache_key({"user": [str(user1.uuid)]})
+
+        assert cache_key_all != cache_key_user1
+        assert cache.get(cache_key_all) is not None
+        assert cache.get(cache_key_user1) is not None
+
+        # Filtered response should have fewer results than unfiltered
+        assert len(response_user1.data["results"]) < len(response_all.data["results"])
+
+    def test_cache_contains_correct_data(self):
+        """Test that cached data matches the actual response."""
+        cache.clear()
+        user = InstagramUserFactory(username="cachedatauser")
+        StoryFactory.create_batch(2, user=user)
+
+        cache_key = self._make_cache_key({})
+
+        response = self.client.get(self.url)
+        assert response.status_code == status.HTTP_200_OK
+
+        cached_data = cache.get(cache_key)
+        assert cached_data is not None
+        assert cached_data["results"] == list(response.data["results"])
 
 
 class StoryDetailViewTest(TestCase):
