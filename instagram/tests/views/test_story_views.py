@@ -445,7 +445,8 @@ class StoryListViewTest(TestCase):
     def _make_cache_key(self, params: dict) -> str:
         """Helper to replicate the cache key logic from StoryListView."""
         params_key = json.dumps(sorted(params.items()), sort_keys=True)
-        return f"story_list_{hashlib.md5(params_key.encode()).hexdigest()}"
+        md5_hash = hashlib.md5(params_key.encode(), usedforsecurity=False).hexdigest()
+        return "story_list_" + md5_hash
 
     def test_cache_miss_on_first_request(self):
         """Test that first request doesn't find cache and creates it."""

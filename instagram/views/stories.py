@@ -51,10 +51,11 @@ class StoryListView(ListAPIView):
         )
 
     def list(self, request, *args, **kwargs):
-        """List stories with 30-second caching per unique query parameter combination."""
+        """List stories with 30-second caching per unique query param combination."""
         params = dict(request.query_params)
         params_key = json.dumps(sorted(params.items()), sort_keys=True)
-        cache_key = f"story_list_{hashlib.md5(params_key.encode()).hexdigest()}"
+        md5_hash = hashlib.md5(params_key.encode(), usedforsecurity=False).hexdigest()
+        cache_key = "story_list_" + md5_hash
 
         cached_response = cache.get(cache_key)
         if cached_response is not None:
