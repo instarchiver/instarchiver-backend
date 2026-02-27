@@ -46,7 +46,7 @@ django-solo==2.5.1  # https://github.com/lazybird/django-solo
 openai==2.24.0  # https://pypi.org/project/openai/
 
 # Firebase Admin
-firebase-admin==7.1.0  # https://pypi.org/project/firebase-admin/
+firebase-admin==7.2.0  # https://pypi.org/project/firebase-admin/
 
 # Stripe
 stripe==14.3.0 # https://pypi.org/project/stripe/
