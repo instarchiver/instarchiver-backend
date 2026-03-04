@@ -36,7 +36,7 @@ class TestInstagramUserAdminActions(TestCase):
         request = self.factory.get("/")
         request.user = self.superuser
         request.session = {}
-        setattr(request, "_messages", FallbackStorage(request))
+        request._messages = FallbackStorage(request)
         return request
 
     @patch("instagram.admin.user.User.update_profile_from_api")

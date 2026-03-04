@@ -7,18 +7,10 @@ from django.test import TestCase
 from django.test import override_settings
 
 from instagram.models import Story
-from instagram.tasks import (
-    generate_story_embedding,
-)
-from instagram.tasks import (
-    generate_story_thumbnail_insight,
-)
-from instagram.tasks import (
-    periodic_generate_story_embeddings,
-)
-from instagram.tasks import (
-    periodic_generate_story_thumbnail_insights,
-)
+from instagram.tasks import generate_story_embedding
+from instagram.tasks import generate_story_thumbnail_insight
+from instagram.tasks import periodic_generate_story_embeddings
+from instagram.tasks import periodic_generate_story_thumbnail_insights
 from instagram.tests.factories import StoryFactory
 
 

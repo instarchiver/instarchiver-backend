@@ -2,10 +2,7 @@ from unittest.mock import patch
 
 from django.test import TestCase
 
-from instagram.models import Post
 from instagram.models import PostMedia
-from instagram.models import Story
-from instagram.models import User
 from instagram.tests.factories import InstagramUserFactory
 from instagram.tests.factories import PostFactory
 from instagram.tests.factories import PostMediaFactory
