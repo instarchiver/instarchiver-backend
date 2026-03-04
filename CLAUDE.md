@@ -143,7 +143,7 @@ Main URL configuration in [config/urls.py](config/urls.py):
 - `/authentication/` - Firebase auth endpoints
 - `/instagram/` - Instagram archiving endpoints
 - `/health/` - Health check endpoints
-- `/api/docs/` - Swagger/OpenAPI documentation (drf-spectacular)
+- `/docs/` - Swagger/OpenAPI documentation (drf-spectacular)
 - `/schema/` - OpenAPI schema
 
 API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRouter (debug mode) or SimpleRouter (production).
@@ -273,6 +273,6 @@ Docker Compose handles PostgreSQL, Redis, Celery, and all other services automat
 ## API Documentation
 
 With server running, access:
-- **Swagger UI:** http://localhost:8000/api/docs/
+- **Swagger UI:** http://localhost:8000/docs/
 - **OpenAPI Schema:** http://localhost:8000/schema/
 - **Admin:** http://localhost:8000/admin/

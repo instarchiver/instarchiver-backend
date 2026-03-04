@@ -30,7 +30,7 @@ If you see errors, try turning it off and on again. Or, you know, read the error
 Services will magically appear at:
 
 - **Django app**: http://localhost:8000
-- **API Documentation**: http://localhost:8000/api/docs/
+- **API Documentation**: http://localhost:8000/docs/
 - **Admin Interface**: http://localhost:8000/admin/
 
 ## Common Docker Compose Tasks
