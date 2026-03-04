@@ -55,5 +55,5 @@ class PostAISearchViewTest(TestCase):
 
         response = self.client.get(self.url, {"text": "photo"})
         assert response.status_code == status.HTTP_200_OK
-        # Only 2 posts have embeddings
+        # Only the 2 posts created with embeddings (lines 51-52) are returned
         assert len(response.data["results"]) == 2  # noqa: PLR2004

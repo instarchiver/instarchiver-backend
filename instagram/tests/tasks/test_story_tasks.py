@@ -288,3 +288,127 @@ class TestPeriodicGenerateStoryEmbeddings(TestCase):
         result = periodic_generate_story_embeddings.delay()
         assert isinstance(result, EagerResult)
         assert result.result["queued"] == 0
+
+
+class TestGenerateStoryThumbnailInsightRetryPaths(TestCase):
+    """Tests for retryable/non-retryable exception handling in story thumbnail task."""
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.signals.story.download_file_from_url")
+    def test_non_retryable_exception_returns_failure(self, mock_download):
+        """Test that a non-retryable exception returns a failure result."""
+        mock_download.return_value = (None, None)
+        story = StoryFactory(thumbnail_url="", thumbnail_insight="")
+        story.thumbnail = _make_image_file()
+        story.save()
+
+        with patch.object(
+            story.__class__,
+            "generate_thumbnail_insight",
+            side_effect=Exception("Some permanent failure"),
+        ):
+            result = generate_story_thumbnail_insight.delay(story.story_id)
+
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is False
+        assert result.result["attempts"] >= 1
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.signals.story.download_file_from_url")
+    def test_retryable_network_exception_exhausts_retries(self, mock_download):
+        """Test that a retryable network exception exhausts retries and fails."""
+        mock_download.return_value = (None, None)
+        story = StoryFactory(thumbnail_url="", thumbnail_insight="")
+        story.thumbnail = _make_image_file()
+        story.save()
+
+        # "network timeout" matches retryable keywords
+        with patch.object(
+            story.__class__,
+            "generate_thumbnail_insight",
+            side_effect=Exception("network timeout"),
+        ):
+            result = generate_story_thumbnail_insight.delay(story.story_id)
+
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is False
+        assert result.result["attempts"] >= 1
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_critical_error_in_auto_generate_blur(self):
+        """Test that DB errors in auto_generate_story_blur_data_urls are handled."""
+        from instagram.tasks import auto_generate_story_blur_data_urls
+
+        with patch(
+            "instagram.tasks.story.Story.objects.filter",
+            side_effect=Exception("DB connection lost"),
+        ):
+            result = auto_generate_story_blur_data_urls.delay()
+
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is False
+        assert "Critical error" in result.result["error"]
+
+
+class TestGenerateStoryEmbeddingRetryPaths(TestCase):
+    """Tests for retryable/non-retryable exception handling in story embedding task."""
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_non_retryable_exception_returns_failure(self):
+        """Test that a non-retryable exception returns failure with attempts info."""
+        story = StoryFactory(thumbnail_insight="Some insight")
+
+        with patch.object(
+            story.__class__,
+            "generate_embedding",
+            side_effect=Exception("Permanent API failure"),
+        ):
+            result = generate_story_embedding.delay(story.story_id)
+
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is False
+        assert result.result["attempts"] >= 1
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_retryable_network_exception_exhausts_retries(self):
+        """Test that a retryable network exception exhausts retries and fails."""
+        story = StoryFactory(thumbnail_insight="Some insight")
+
+        # "openai connection error" contains "openai" and "connection" — both retryable
+        with patch.object(
+            story.__class__,
+            "generate_embedding",
+            side_effect=Exception("openai connection error"),
+        ):
+            result = generate_story_embedding.delay(story.story_id)
+
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is False
+        assert result.result["attempts"] >= 1
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_critical_error_in_periodic_thumbnail_insights(self):
+        """Test that DB errors in periodic_generate_story_thumbnail_insights are handled."""
+        with patch(
+            "instagram.tasks.story.Story.objects.filter",
+            side_effect=Exception("DB down"),
+        ):
+            result = periodic_generate_story_thumbnail_insights.delay()
+
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is False
+        assert "Critical error" in result.result["error"]
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_critical_error_in_periodic_embeddings(self):
+        """Test that DB errors in periodic_generate_story_embeddings are handled."""
+        with patch(
+            "instagram.tasks.story.Story.objects.filter",
+            side_effect=Exception("DB crash"),
+        ):
+            result = periodic_generate_story_embeddings.delay()
+
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is False
+        assert "Critical error" in result.result["error"]
+
