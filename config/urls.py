@@ -10,7 +10,7 @@ from drf_spectacular.views import SpectacularAPIView
 from drf_spectacular.views import SpectacularSwaggerView
 
 urlpatterns = [
-    path("", RedirectView.as_view(url="/api/docs/", permanent=False)),
+    path("", RedirectView.as_view(url="/docs/", permanent=False)),
     path("prometheus/", include("django_prometheus.urls")),
     # Django Admin, use {% url 'admin:index' %}
     path(settings.ADMIN_URL, admin.site.urls),
@@ -30,7 +30,7 @@ if settings.DEBUG:
 urlpatterns += [
     path("schema/", SpectacularAPIView.as_view(), name="api-schema"),
     path(
-        "api/docs/",
+        "docs/",
         SpectacularSwaggerView.as_view(url_name="api-schema"),
         name="api-docs",
     ),
