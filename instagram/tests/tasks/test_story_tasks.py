@@ -1,3 +1,4 @@
+from io import BytesIO
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -5,8 +6,10 @@ from celery.result import EagerResult
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.test import override_settings
+from PIL import Image
 
 from instagram.models import Story
+from instagram.tasks import auto_generate_story_blur_data_urls
 from instagram.tasks import generate_story_embedding
 from instagram.tasks import generate_story_thumbnail_insight
 from instagram.tasks import periodic_generate_story_embeddings
@@ -16,10 +19,6 @@ from instagram.tests.factories import StoryFactory
 
 def _make_image_file():
     """Return a minimal SimpleUploadedFile that looks like a JPEG."""
-    from io import BytesIO
-
-    from PIL import Image
-
     img = Image.new("RGB", (10, 10), color="blue")
     buf = BytesIO()
     img.save(buf, format="JPEG")
@@ -91,7 +90,7 @@ class TestGenerateStoryThumbnailInsight(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     @patch("instagram.signals.story.download_file_from_url")
     def test_value_error_returns_failure(self, mock_download):
-        """Test that a ValueError raised by the model method returns a failure result."""
+        """Test that a ValueError from the model method returns a failure result."""
         mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="", thumbnail_insight="")
         story.thumbnail = _make_image_file()
@@ -329,8 +328,6 @@ class TestGenerateStoryThumbnailInsightRetryPaths(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_critical_error_in_auto_generate_blur(self):
         """Test that DB errors in auto_generate_story_blur_data_urls are handled."""
-        from instagram.tasks import auto_generate_story_blur_data_urls
-
         with patch(
             "instagram.tasks.story.Story.objects.filter",
             side_effect=Exception("DB connection lost"),
@@ -380,7 +377,7 @@ class TestGenerateStoryEmbeddingRetryPaths(TestCase):
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_critical_error_in_periodic_thumbnail_insights(self):
-        """Test that DB errors in periodic_generate_story_thumbnail_insights are handled."""
+        """Test DB errors in periodic_generate_story_thumbnail_insights are handled."""
         with patch(
             "instagram.tasks.story.Story.objects.filter",
             side_effect=Exception("DB down"),

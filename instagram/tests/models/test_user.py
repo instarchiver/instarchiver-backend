@@ -61,7 +61,7 @@ class TestUserExtractApiData(TestCase):
             "edge_followed_by": {"count": 1000},
             "edge_follow": {"count": 200},
         }
-        user._extract_api_data_from_username_v2(data)
+        user._extract_api_data_from_username_v2(data)  # noqa: SLF001
         assert user.instagram_id == "123456789"
         assert user.username == "newusername"
         assert user.full_name == "New Name"
@@ -69,9 +69,9 @@ class TestUserExtractApiData(TestCase):
         assert user.biography == "Test bio"
         assert user.is_private is True
         assert user.is_verified is False
-        assert user.media_count == 50
-        assert user.follower_count == 1000
-        assert user.following_count == 200
+        assert user.media_count == 50  # noqa: PLR2004
+        assert user.follower_count == 1000  # noqa: PLR2004
+        assert user.following_count == 200  # noqa: PLR2004
 
     def test_extract_api_data_from_username_v2_fallback_profile_pic(self):
         """Test that profile_pic_url is used as fallback when hd URL is absent."""
@@ -81,13 +81,13 @@ class TestUserExtractApiData(TestCase):
             "username": "user",
             "profile_pic_url": "https://example.com/pic.jpg",
         }
-        user._extract_api_data_from_username_v2(data)
+        user._extract_api_data_from_username_v2(data)  # noqa: SLF001
         assert user.original_profile_picture_url == "https://example.com/pic.jpg"
 
     def test_extract_api_data_from_username_v2_none_data(self):
         """Test that passing None data is a no-op."""
         user = InstagramUserFactory(username="unchanged")
-        user._extract_api_data_from_username_v2(None)
+        user._extract_api_data_from_username_v2(None)  # noqa: SLF001
         assert user.username == "unchanged"
 
     def test_extract_api_data_from_user_id_basic(self):
@@ -105,19 +105,19 @@ class TestUserExtractApiData(TestCase):
             "edge_followed_by": {"count": 500},
             "edge_follow": {"count": 100},
         }
-        user._extract_api_data_from_user_id(data)
+        user._extract_api_data_from_user_id(data)  # noqa: SLF001
         assert user.instagram_id == "987654321"
         assert user.username == "byid_user"
         assert user.full_name == "By ID Name"
         assert user.is_verified is True
-        assert user.media_count == 10
-        assert user.follower_count == 500
-        assert user.following_count == 100
+        assert user.media_count == 10  # noqa: PLR2004
+        assert user.follower_count == 500  # noqa: PLR2004
+        assert user.following_count == 100  # noqa: PLR2004
 
     def test_extract_api_data_from_user_id_none_data(self):
         """Test that passing None data is a no-op."""
         user = InstagramUserFactory(username="unchanged_id")
-        user._extract_api_data_from_user_id(None)
+        user._extract_api_data_from_user_id(None)  # noqa: SLF001
         assert user.username == "unchanged_id"
 
 
@@ -257,7 +257,7 @@ class TestUserGetPostDataFromApi(TestCase):
                 "next_max_id": None,
             },
         }
-        result = user._update_post_data_from_api()
+        result = user._update_post_data_from_api()  # noqa: SLF001
         assert result["total_posts"] == 1
         assert result["pages_fetched"] == 1
 
@@ -268,18 +268,32 @@ class TestUserGetPostDataFromApi(TestCase):
         mock_fetch.side_effect = [
             {
                 "data": {
-                    "items": [{"pk": "p1", "display_uri": "", "caption": None, "taken_at": None}],
+                    "items": [
+                        {
+                            "pk": "p1",
+                            "display_uri": "",
+                            "caption": None,
+                            "taken_at": None,
+                        },
+                    ],
                     "next_max_id": "cursor_abc",
                 },
             },
             {
                 "data": {
-                    "items": [{"pk": "p2", "display_uri": "", "caption": None, "taken_at": None}],
+                    "items": [
+                        {
+                            "pk": "p2",
+                            "display_uri": "",
+                            "caption": None,
+                            "taken_at": None,
+                        },
+                    ],
                     "next_max_id": None,
                 },
             },
         ]
-        result = user._update_post_data_from_api()
+        result = user._update_post_data_from_api()  # noqa: SLF001
         assert result["total_posts"] == 2  # noqa: PLR2004
         assert result["pages_fetched"] == 2  # noqa: PLR2004
 
@@ -326,7 +340,7 @@ class TestUserUpdateStoriesFromApi(TestCase):
                 },
             },
         }
-        updated = user._update_stories_from_api()
+        updated = user._update_stories_from_api()  # noqa: SLF001
         assert len(updated) == 1
         assert Story.objects.filter(story_id="story_001").exists()
 
@@ -344,7 +358,7 @@ class TestUserUpdateStoriesFromApi(TestCase):
             "message": "Rate limited",
         }
         with pytest.raises(Exception, match="Rate limited"):
-            user._update_stories_from_api()
+            user._update_stories_from_api()  # noqa: SLF001
 
         log = UserUpdateStoryLog.objects.filter(user=user).first()
         assert log is not None
@@ -373,13 +387,13 @@ class TestUserUpdateStoriesFromApi(TestCase):
 
     @patch("instagram.models.user.fetch_user_stories_by_username")
     def test_update_stories_exception_sets_log_failed(self, mock_fetch):
-        """Test that an unexpected exception sets log status to FAILED (lines 370-372)."""
+        """Test that an unexpected exception sets log status to FAILED."""
         user = InstagramUserFactory(username="raiseuser")
         # Raise an actual exception (not a bad response code) so the log is
         # still STATUS_IN_PROGRESS when the except block runs.
         mock_fetch.side_effect = RuntimeError("Unexpected connection error")
         with pytest.raises(RuntimeError):
-            user._update_stories_from_api()
+            user._update_stories_from_api()  # noqa: SLF001
 
         log = UserUpdateStoryLog.objects.filter(user=user).first()
         assert log is not None
@@ -388,7 +402,11 @@ class TestUserUpdateStoriesFromApi(TestCase):
 
     @patch("instagram.models.user.fetch_user_stories_by_username")
     @patch("instagram.signals.story.download_file_from_url")
-    def test_update_stories_existing_story_not_duplicated(self, mock_download, mock_fetch):
+    def test_update_stories_existing_story_not_duplicated(
+        self,
+        mock_download,
+        mock_fetch,
+    ):
         """Test that existing stories are not duplicated on re-update."""
         mock_download.return_value = (None, None)
         user = InstagramUserFactory(username="nodupuser")
@@ -408,5 +426,5 @@ class TestUserUpdateStoriesFromApi(TestCase):
                 },
             },
         }
-        user._update_stories_from_api()
+        user._update_stories_from_api()  # noqa: SLF001
         assert Story.objects.filter(story_id="existing_story").count() == 1

@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.messages import get_messages
+from django.contrib.messages.storage.fallback import FallbackStorage
 from django.http import HttpResponseRedirect
 from django.test import RequestFactory
 from django.test import TestCase
@@ -25,18 +26,16 @@ class TestInstagramUserAdminActions(TestCase):
         # Create a superuser so request.user has all permissions
         self.superuser = DjangoUser.objects.create_superuser(
             username="adminsuper",
-            password="password",
+            password="testpassword123",  # noqa: S106
             email="adminsuper@example.com",
         )
 
     def _get_request_with_messages(self):
         """Helper to create a request that supports Django messages and auth."""
-        from django.contrib.messages.storage.fallback import FallbackStorage
-
         request = self.factory.get("/")
         request.user = self.superuser
         request.session = {}
-        request._messages = FallbackStorage(request)
+        request._messages = FallbackStorage(request)  # noqa: SLF001
         return request
 
     @patch("instagram.admin.user.User.update_profile_from_api")

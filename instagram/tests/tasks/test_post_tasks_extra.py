@@ -1,11 +1,23 @@
 """Additional tests for edge-case/exception paths in instagram/tasks/post.py."""
+from io import BytesIO
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from celery.result import EagerResult
 from django.test import TestCase
 from django.test import override_settings
+from PIL import Image
 
+from instagram.tasks import download_post_media_from_url
+from instagram.tasks import download_post_media_thumbnail_from_url
+from instagram.tasks import download_post_thumbnail_from_url
+from instagram.tasks import generate_post_embedding
+from instagram.tasks import periodic_generate_post_blur_data_urls
+from instagram.tasks import periodic_generate_post_embeddings
+from instagram.tasks import periodic_generate_post_media_blur_data_urls
+from instagram.tasks import periodic_generate_post_thumbnail_insights
+from instagram.tasks.post import _determine_file_extension
+from instagram.tasks.post import _get_file_hash
 from instagram.tests.factories import PostFactory
 from instagram.tests.factories import PostMediaFactory
 
@@ -16,8 +28,6 @@ class TestPeriodicPostTaskCriticalErrors(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_periodic_generate_post_blur_data_urls_critical_error(self):
         """Test critical error in periodic_generate_post_blur_data_urls."""
-        from instagram.tasks import periodic_generate_post_blur_data_urls
-
         with patch(
             "instagram.tasks.post.Post.objects.filter",
             side_effect=Exception("DB connection lost"),
@@ -31,8 +41,6 @@ class TestPeriodicPostTaskCriticalErrors(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_periodic_generate_post_media_blur_data_urls_critical_error(self):
         """Test critical error in periodic_generate_post_media_blur_data_urls."""
-        from instagram.tasks import periodic_generate_post_media_blur_data_urls
-
         with patch(
             "instagram.tasks.post.PostMedia.objects.filter",
             side_effect=Exception("DB crash"),
@@ -46,8 +54,6 @@ class TestPeriodicPostTaskCriticalErrors(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_periodic_generate_post_thumbnail_insights_critical_error(self):
         """Test critical error in periodic_generate_post_thumbnail_insights."""
-        from instagram.tasks import periodic_generate_post_thumbnail_insights
-
         with patch(
             "instagram.tasks.post.Post.objects.filter",
             side_effect=Exception("DB unavailable"),
@@ -61,8 +67,6 @@ class TestPeriodicPostTaskCriticalErrors(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_periodic_generate_post_embeddings_critical_error(self):
         """Test critical error in periodic_generate_post_embeddings."""
-        from instagram.tasks import periodic_generate_post_embeddings
-
         with patch(
             "instagram.tasks.post.Post.objects.filter",
             side_effect=Exception("DB timeout"),
@@ -79,8 +83,6 @@ class TestGetFileHashEdgeCases(TestCase):
 
     def test_get_file_hash_returns_none_on_oserror(self):
         """Test that _get_file_hash returns None when file cannot be opened."""
-        from instagram.tasks.post import _get_file_hash
-
         mock_file_field = MagicMock()
         mock_file_field.__bool__ = MagicMock(return_value=True)
         mock_file_field.open.side_effect = OSError("File not found")
@@ -90,8 +92,6 @@ class TestGetFileHashEdgeCases(TestCase):
 
     def test_get_file_hash_returns_none_when_field_empty(self):
         """Test that _get_file_hash returns None when file field is falsy."""
-        from instagram.tasks.post import _get_file_hash
-
         result = _get_file_hash(None)
         assert result is None
 
@@ -101,8 +101,6 @@ class TestDetermineFileExtension(TestCase):
 
     def test_video_content_type_returns_mp4(self):
         """Test that video content type returns mp4."""
-        from instagram.tasks.post import _determine_file_extension
-
         mock_response = MagicMock()
         mock_response.headers = {"content-type": "video/mp4"}
         result = _determine_file_extension(mock_response, "https://example.com/v")
@@ -110,8 +108,6 @@ class TestDetermineFileExtension(TestCase):
 
     def test_image_content_type_returns_jpg(self):
         """Test that image content type returns jpg."""
-        from instagram.tasks.post import _determine_file_extension
-
         mock_response = MagicMock()
         mock_response.headers = {"content-type": "image/jpeg"}
         result = _determine_file_extension(mock_response, "https://example.com/i")
@@ -119,11 +115,12 @@ class TestDetermineFileExtension(TestCase):
 
     def test_unknown_content_type_falls_back_to_url_extension(self):
         """Test that unknown content type falls back to URL extension."""
-        from instagram.tasks.post import _determine_file_extension
-
         mock_response = MagicMock()
         mock_response.headers = {"content-type": "application/octet-stream"}
-        result = _determine_file_extension(mock_response, "https://example.com/file.webm")
+        result = _determine_file_extension(
+            mock_response,
+            "https://example.com/file.webm",
+        )
         assert result == "webm"
 
 
@@ -133,8 +130,6 @@ class TestDownloadPostThumbnailEdgeCases(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_no_thumbnail_url_returns_error(self):
         """Test that a post without a thumbnail_url returns an error."""
-        from instagram.tasks import download_post_thumbnail_from_url
-
         post = PostFactory(thumbnail_url="", raw_data=None)
         result = download_post_thumbnail_from_url.delay(post.id)
 
@@ -146,12 +141,6 @@ class TestDownloadPostThumbnailEdgeCases(TestCase):
     @patch("instagram.tasks.post.requests.get")
     def test_image_dimension_exception_handled(self, mock_get):
         """Test that failure to parse image dimensions is handled gracefully."""
-        from io import BytesIO
-
-        from PIL import Image
-
-        from instagram.tasks import download_post_thumbnail_from_url
-
         post = PostFactory(thumbnail_url="https://example.com/thumb.jpg", raw_data=None)
 
         # Provide valid bytes for response so download succeeds
@@ -178,8 +167,6 @@ class TestDownloadPostThumbnailEdgeCases(TestCase):
     @patch("instagram.tasks.post.requests.get")
     def test_non_retryable_exception_returns_failure(self, mock_get):
         """Test that a permanent (non-retryable) exception returns failure."""
-        from instagram.tasks import download_post_thumbnail_from_url
-
         post = PostFactory(thumbnail_url="https://example.com/thumb.jpg", raw_data=None)
         mock_get.side_effect = RuntimeError("Permanent failure")
 
@@ -192,12 +179,6 @@ class TestDownloadPostThumbnailEdgeCases(TestCase):
     @patch("instagram.tasks.post.requests.get")
     def test_oserror_reading_existing_thumbnail_logged(self, mock_get):
         """Test that OSError reading existing thumbnail is handled gracefully."""
-        from io import BytesIO
-
-        from PIL import Image
-
-        from instagram.tasks import download_post_thumbnail_from_url
-
         post = PostFactory(thumbnail_url="https://example.com/t.jpg", raw_data=None)
         # Give the post an existing thumbnail with a mocked file
         mock_thumbnail = MagicMock()
@@ -228,12 +209,6 @@ class TestDownloadPostMediaThumbnailEdgeCases(TestCase):
     @patch("instagram.tasks.post._download_file_from_url")
     def test_image_dimension_exception_handled(self, mock_download):
         """Test that failure to parse image dimensions is handled gracefully."""
-        from io import BytesIO
-
-        from PIL import Image
-
-        from instagram.tasks import download_post_media_thumbnail_from_url
-
         post_media = PostMediaFactory(thumbnail_url="https://example.com/t.jpg")
 
         img = Image.new("RGB", (5, 5))
@@ -252,8 +227,6 @@ class TestDownloadPostMediaThumbnailEdgeCases(TestCase):
     @patch("instagram.tasks.post._download_file_from_url")
     def test_non_retryable_exception_returns_failure(self, mock_download):
         """Test that a permanent error returns failure."""
-        from instagram.tasks import download_post_media_thumbnail_from_url
-
         post_media = PostMediaFactory(thumbnail_url="https://example.com/t.jpg")
         mock_download.side_effect = RuntimeError("Permanent media failure")
 
@@ -269,12 +242,10 @@ class TestDownloadPostMediaFromUrlEdgeCases(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     @patch("instagram.tasks.post.requests.get")
     def test_non_retryable_exception_returns_failure(self, mock_get):
-        """Test that a permanent error returns failure in download_post_media_from_url."""
-        from instagram.tasks import download_post_media_from_url
-
+        """Test permanent error returns failure in download_post_media_from_url."""
         post_media = PostMediaFactory(media_url="https://example.com/m.mp4")
         # RuntimeError is not caught by (RequestException, OSError) → goes to
-        # the non-retryable `except Exception` block (lines 923-929)
+        # the non-retryable `except Exception` block
         mock_get.side_effect = RuntimeError("Permanent media failure")
 
         result = download_post_media_from_url.delay(post_media.id)
@@ -289,8 +260,6 @@ class TestGeneratePostEmbeddingEdgeCases(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_value_error_returns_failure(self):
         """Test that ValueError from generate_embedding returns failure."""
-        from instagram.tasks import generate_post_embedding
-
         post = PostFactory(
             thumbnail_insight="Some insight",
             embedding=None,
@@ -310,8 +279,6 @@ class TestGeneratePostEmbeddingEdgeCases(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_non_retryable_exception_returns_failure(self):
         """Test that a non-retryable generic error returns failure."""
-        from instagram.tasks import generate_post_embedding
-
         post = PostFactory(
             thumbnail_insight="Some insight",
             embedding=None,
@@ -331,14 +298,12 @@ class TestGeneratePostEmbeddingEdgeCases(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_retryable_network_exception_exhausts_retries(self):
         """Test that a retryable network error exhausts retries and returns failure."""
-        from instagram.tasks import generate_post_embedding
-
         post = PostFactory(
             thumbnail_insight="Some insight",
             embedding=None,
             raw_data=None,
         )
-        # "network timeout" contains both "network" and "timeout" — both retryable keywords
+        # "network timeout" contains both "network" and "timeout" — retryable keywords
         with patch.object(
             post.__class__,
             "generate_embedding",

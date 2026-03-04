@@ -113,8 +113,8 @@ class TestPostMediaSignal(TestCase):
         mock_blur_delay,
         mock_thumb_delay,
     ):
-        """Test that download and blur tasks are queued when PostMedia is created."""
-        # Use raw_data=None to avoid triggering post-type processing in the parent signal
+        """Test that download and blur tasks are queued on PostMedia creation."""
+        # Use raw_data=None to avoid post-type processing in the parent signal
         parent_post = PostFactory(raw_data=None)
         with self.captureOnCommitCallbacks(execute=True):
             post_media = PostMediaFactory(

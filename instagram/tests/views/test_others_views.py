@@ -33,7 +33,9 @@ class ProcessInstagramDataViewTest(TestCase):
     def test_unauthenticated_request_rejected(self):
         """Test that unauthenticated requests are rejected."""
         unauthenticated_client = APIClient()
-        response = unauthenticated_client.post(self.url, self.valid_payload, format="json")
+        response = unauthenticated_client.post(
+            self.url, self.valid_payload, format="json",
+        )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     @patch("instagram.signals.story.download_file_from_url")
@@ -54,7 +56,9 @@ class ProcessInstagramDataViewTest(TestCase):
         """Test that an existing user is reused without creating a duplicate."""
         mock_download.return_value = (None, None)
         InstagramUserFactory(username="existinguser")
-        payload = dict(self.valid_payload, username="existinguser", story_id="new_story_002")
+        payload = dict(
+            self.valid_payload, username="existinguser", story_id="new_story_002",
+        )
         response = self.client.post(self.url, payload, format="json")
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data["user_created"] is False
