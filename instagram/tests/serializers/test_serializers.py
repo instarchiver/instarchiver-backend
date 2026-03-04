@@ -53,7 +53,9 @@ class TestInstagramUserHistoryListSerializer(TestCase):
         # Manually set the profile_picture on the history object to simulate a saved pic
         history_record.profile_picture = "users/testuser/pic.jpg"
         serializer = InstagramUserHistoryListSerializer(history_record)
-        assert serializer.data["profile_picture"] == "https://example.com/storage/pic.jpg"
+        assert (
+            serializer.data["profile_picture"] == "https://example.com/storage/pic.jpg"
+        )
         mock_storage.url.assert_called_once_with("users/testuser/pic.jpg")
 
 

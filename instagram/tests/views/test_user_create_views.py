@@ -25,7 +25,9 @@ class InstagramUserCreateViewTest(TestCase):
         """Test successful Instagram user creation via POST."""
         mock_update.return_value = None
         response = self.client.post(
-            self.url, {"username": "brandnewuser"}, format="json",
+            self.url,
+            {"username": "brandnewuser"},
+            format="json",
         )
         assert response.status_code == status.HTTP_201_CREATED
         assert InstagramUser.objects.filter(username="brandnewuser").exists()

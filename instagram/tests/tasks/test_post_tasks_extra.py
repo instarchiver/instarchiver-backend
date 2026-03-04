@@ -1,4 +1,5 @@
 """Additional tests for edge-case/exception paths in instagram/tasks/post.py."""
+
 from io import BytesIO
 from unittest.mock import MagicMock
 from unittest.mock import patch

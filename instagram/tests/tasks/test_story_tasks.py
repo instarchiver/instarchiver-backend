@@ -400,4 +400,3 @@ class TestGenerateStoryEmbeddingRetryPaths(TestCase):
         assert isinstance(result, EagerResult)
         assert result.result["success"] is False
         assert "Critical error" in result.result["error"]
-
