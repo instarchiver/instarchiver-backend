@@ -54,4 +54,5 @@ class PostMediaAdmin(ModelAdmin):
             },
         ),
     )
+    autocomplete_fields = ["post"]
     ordering = ["-created_at"]
