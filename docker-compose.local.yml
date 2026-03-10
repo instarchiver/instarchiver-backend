@@ -11,7 +11,7 @@ services:
     image: instarchiver_local_django
     container_name: instarchiver_local_django
     depends_on:
-      - postgres
+      - pgbouncer
       - redis
       - mailpit
     volumes:
@@ -19,6 +19,7 @@ services:
     env_file:
       - ./.envs/.local/.django
       - ./.envs/.local/.postgres
+      - ./.envs/.local/.pgbouncer
     ports:
       - '8000:8000'
     command: /start
@@ -43,6 +44,17 @@ services:
     ports:
       - "8025:8025"
 
+  pgbouncer:
+    build:
+      context: .
+      dockerfile: ./compose/production/pgbouncer/Dockerfile
+    image: instarchiver_local_pgbouncer
+    container_name: instarchiver_local_pgbouncer
+    depends_on:
+      - postgres
+    env_file:
+      - ./.envs/.local/.pgbouncer
+
   redis:
     image: docker.io/redis:6
     container_name: instarchiver_local_redis
@@ -55,7 +67,7 @@ services:
     container_name: instarchiver_local_celeryworker
     depends_on:
       - redis
-      - postgres
+      - pgbouncer
       - mailpit
     ports: []
     command: /start-celeryworker
@@ -66,7 +78,7 @@ services:
     container_name: instarchiver_local_celerybeat
     depends_on:
       - redis
-      - postgres
+      - pgbouncer
       - mailpit
     ports: []
     command: /start-celerybeat
