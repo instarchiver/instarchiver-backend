@@ -16,11 +16,12 @@ services:
     volumes:
       - instarchiver_production_django_media:/app/core/media
     depends_on:
-      - postgres
+      - pgbouncer
       - redis
     env_file:
       - ./.envs/.production/.django
       - ./.envs/.production/.postgres
+      - ./.envs/.production/.pgbouncer
     command: /start
 
   postgres:
@@ -58,6 +59,30 @@ services:
     <<: *django
     image: instarchiver_production_flower
     command: /start-flower
+
+  pgbouncer:
+    build:
+      context: .
+      dockerfile: ./compose/production/pgbouncer/Dockerfile
+    image: instarchiver_production_pgbouncer
+    depends_on:
+      - postgres
+    env_file:
+      - ./.envs/.production/.pgbouncer
+    # PgBouncer listens on port 6432 internally; not exposed externally by design.
+    # Required variables in .envs/.production/.pgbouncer:
+    #   PGBOUNCER_HOST=pgbouncer
+    #   PGBOUNCER_PORT=6432
+    #   POSTGRESQL_HOST=postgres
+    #   POSTGRESQL_PORT=5432
+    #   POSTGRESQL_USERNAME=<POSTGRES_USER>
+    #   POSTGRESQL_PASSWORD=<POSTGRES_PASSWORD>
+    #   POSTGRESQL_DATABASE=<POSTGRES_DB>
+    #   PGBOUNCER_DATABASE=<POSTGRES_DB>
+    #   PGBOUNCER_POOL_MODE=session
+    #   PGBOUNCER_MAX_CLIENT_CONN=100
+    #   PGBOUNCER_DEFAULT_POOL_SIZE=20
+    #   PGBOUNCER_IGNORE_STARTUP_PARAMETERS=extra_float_digits
 
   nginx:
     build:
