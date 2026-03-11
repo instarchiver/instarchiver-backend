@@ -34,8 +34,11 @@ class StoryListView(ListAPIView):
     filterset_fields = ["user"]
 
     def get_queryset(self):
-        # Annotate users with has_stories and has_history
-        annotated_users = InstagramUser.objects.annotate(
+        # Annotate users with has_stories and has_history, defer unused heavy fields
+        annotated_users = InstagramUser.objects.defer(
+            "original_profile_picture_url",
+            "raw_api_data",
+        ).annotate(
             has_stories=Exists(Story.objects.filter(user=OuterRef("pk"))),
             has_history=Exists(
                 InstagramUser.history.model.objects.filter(uuid=OuterRef("pk")),
@@ -43,7 +46,15 @@ class StoryListView(ListAPIView):
         )
 
         return (
-            Story.objects.all()
+            Story.objects.only(
+                "story_id",
+                "user_id",
+                "thumbnail",
+                "blur_data_url",
+                "media",
+                "created_at",
+                "story_created_at",
+            )
             .prefetch_related(
                 Prefetch("user", queryset=annotated_users),
             )
