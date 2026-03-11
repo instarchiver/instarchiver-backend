@@ -133,7 +133,7 @@ class JWTRefreshTokenLifetimeTestCase(TestCase):
         assert simple_jwt.get("REFRESH_TOKEN_LIFETIME") == timedelta(days=30)
 
     def test_generated_refresh_token_expires_in_30_days(self):
-        """Test that a generated refresh token expires approximately 30 days from now."""
+        """Test that a generated refresh token has a 30-day lifetime."""
         user = UserFactory()
         refresh = RefreshToken.for_user(user)
 
