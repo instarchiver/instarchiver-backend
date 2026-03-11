@@ -1,7 +1,11 @@
+from datetime import timedelta
+
+from django.conf import settings
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from core.users.tests.factories import UserFactory
 
@@ -118,3 +122,65 @@ class GetMeViewTestCase(TestCase):
         # Test DELETE method
         response = self.client.delete(self.url)
         assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
+
+
+class JWTRefreshTokenLifetimeTestCase(TestCase):
+    """Test suite for JWT refresh token lifetime configuration."""
+
+    def test_refresh_token_lifetime_is_30_days(self):
+        """Test that SIMPLE_JWT setting has REFRESH_TOKEN_LIFETIME of 30 days."""
+        simple_jwt = getattr(settings, "SIMPLE_JWT", {})
+        assert simple_jwt.get("REFRESH_TOKEN_LIFETIME") == timedelta(days=30)
+
+    def test_generated_refresh_token_expires_in_30_days(self):
+        """Test that a generated refresh token has a 30-day lifetime."""
+        user = UserFactory()
+        refresh = RefreshToken.for_user(user)
+
+        token_lifetime = refresh.lifetime
+        assert token_lifetime == timedelta(days=30)
+
+
+class RefreshTokenViewTestCase(TestCase):
+    """Test suite for the RefreshTokenView endpoint."""
+
+    def setUp(self):
+        """Set up test client and user for each test."""
+        self.client = APIClient()
+        self.user = UserFactory(
+            email="refreshuser@example.com",
+            username="refreshuser",
+            name="Refresh User",
+        )
+        self.url = reverse("authentication:refresh-token")
+
+    def test_refresh_token_returns_new_tokens(self):
+        """Test that a valid refresh token returns new access and refresh tokens."""
+        refresh = RefreshToken.for_user(self.user)
+
+        response = self.client.post(
+            self.url,
+            {"refresh": str(refresh)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "access" in response.data
+        assert "refresh" in response.data
+
+    def test_refresh_token_with_invalid_token_returns_400(self):
+        """Test that an invalid refresh token returns a 400 error."""
+        response = self.client.post(
+            self.url,
+            {"refresh": "invalid.token.value"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "error" in response.data
+
+    def test_refresh_token_missing_token_returns_400(self):
+        """Test that a missing refresh token returns a 400 error."""
+        response = self.client.post(self.url, {}, format="json")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
