@@ -8,6 +8,8 @@ from django.views import defaults as default_views
 from django.views.generic import RedirectView
 from drf_spectacular.views import SpectacularAPIView
 from drf_spectacular.views import SpectacularSwaggerView
+from health_check.views import HealthCheckView
+from redis.asyncio import Redis as RedisClient
 
 urlpatterns = [
     path("", RedirectView.as_view(url="/docs/", permanent=False)),
@@ -16,7 +18,30 @@ urlpatterns = [
     path(settings.ADMIN_URL, admin.site.urls),
     # Your stuff: custom urls includes go here
     path("authentication/", include("authentication.urls")),
-    path("health/", include("health_check.urls")),
+    path(
+        "health/",
+        HealthCheckView.as_view(
+            checks=[
+                "health_check.Cache",
+                "health_check.DNS",
+                "health_check.Database",
+                "health_check.Mail",
+                "health_check.Storage",
+                # # 3rd party checks
+                # "health_check.contrib.psutil.Disk",
+                # "health_check.contrib.psutil.Memory",
+                "health_check.contrib.celery.Ping",
+                (
+                    "health_check.contrib.redis.Redis",
+                    {
+                        "client_factory": lambda: RedisClient.from_url(
+                            settings.REDIS_URL,
+                        ),
+                    },
+                ),
+            ],
+        ),
+    ),
     path("instagram/", include("instagram.urls")),
     path("payments/", include("payments.urls")),
     # Media files
