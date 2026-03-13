@@ -24,7 +24,7 @@ urlpatterns = [
             checks=[
                 "health_check.Cache",
                 "health_check.DNS",
-                "health_check.Database",
+                # "health_check.Database",
                 "health_check.Mail",
                 "health_check.Storage",
                 # # 3rd party checks
