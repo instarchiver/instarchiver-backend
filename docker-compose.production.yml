@@ -16,11 +16,19 @@ services:
     volumes:
       - instarchiver_production_django_media:/app/core/media
     depends_on:
-      - postgres
-      - redis
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_started
     env_file:
       - ./.envs/.production/.django
       - ./.envs/.production/.postgres
+    # Route Django through PgBouncer instead of connecting to PostgreSQL directly.
+    # The entrypoint uses POSTGRES_HOST / POSTGRES_PORT to build DATABASE_URL, so
+    # overriding them here re-directs traffic to PgBouncer.
+    environment:
+      - POSTGRES_HOST=pgbouncer
+      - POSTGRES_PORT=6432
     command: /start
 
   postgres:
@@ -35,6 +43,23 @@ services:
       - instarchiver_production_postgres_data_backups:/backups
     env_file:
       - ./.envs/.production/.postgres
+
+  pgbouncer:
+    build:
+      context: .
+      dockerfile: ./compose/production/pgbouncer/Dockerfile
+    image: instarchiver_production_pgbouncer
+    env_file:
+      - ./.envs/.production/.postgres
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   redis:
     image: docker.io/redis:6

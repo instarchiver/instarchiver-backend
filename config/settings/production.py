@@ -26,12 +26,29 @@ CSRF_TRUSTED_ORIGINS = [
 
 # DATABASES
 # ------------------------------------------------------------------------------
-DATABASES["default"]["CONN_MAX_AGE"] = env.int("CONN_MAX_AGE", default=60)
+# With PgBouncer in front of PostgreSQL (transaction pooling mode) Django does
+# not need to maintain its own persistent connections — PgBouncer manages the
+# server-side pool.  Setting CONN_MAX_AGE=0 ensures Django re-opens a logical
+# connection to PgBouncer on every request, which re-runs psycopg3's session
+# setup (e.g. SELECT set_config('TimeZone','UTC',false)).  This guarantees that
+# session-scoped state is correct even when PgBouncer hands the request a
+# previously-used backend connection.  Override via the CONN_MAX_AGE env var
+# if persistent client-to-PgBouncer connections are preferred.
+DATABASES["default"]["CONN_MAX_AGE"] = env.int("CONN_MAX_AGE", default=0)
 # https://docs.djangoproject.com/en/dev/ref/settings/#conn-health-checks
 DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 # https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNECT-CONNECT-TIMEOUT
 DATABASES["default"]["OPTIONS"] = {
     "connect_timeout": env.int("DB_CONN_TIMEOUT", default=10),
+    # Disable server-side prepared statements so that psycopg3 is compatible
+    # with PgBouncer running in transaction pooling mode.  Prepared statements
+    # are scoped to a PostgreSQL session, but in transaction pooling mode the
+    # server connection is returned to the pool after every transaction, making
+    # session-scoped state unavailable on the next request.
+    # Setting prepare_threshold=0 instructs psycopg3 to never send
+    # PREPARE / EXECUTE on the wire; all queries run as simple protocol.
+    # See: https://www.psycopg.org/psycopg3/docs/advanced/prepare.html
+    "prepare_threshold": 0,
 }
 
 # CACHES
