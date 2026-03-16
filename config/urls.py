@@ -23,14 +23,14 @@ urlpatterns = [
         HealthCheckView.as_view(
             checks=[
                 "health_check.Cache",
-                "health_check.DNS",
+                # "health_check.DNS",
                 # "health_check.Database",
-                "health_check.Mail",
-                "health_check.Storage",
+                # "health_check.Mail",
+                # "health_check.Storage",
                 # # 3rd party checks
                 # "health_check.contrib.psutil.Disk",
                 # "health_check.contrib.psutil.Memory",
-                "health_check.contrib.celery.Ping",
+                # "health_check.contrib.celery.Ping",
                 (
                     "health_check.contrib.redis.Redis",
                     {
