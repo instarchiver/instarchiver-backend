@@ -1,5 +1,7 @@
+import contextlib
 import hashlib
 import logging
+from http import HTTPStatus
 
 import requests
 from celery import shared_task
@@ -536,6 +538,30 @@ def auto_update_user_story(self, user_id):
 
     except Exception as e:
         error_msg = str(e)
+
+        # Handle HTTP 429 (Too Many Requests) with unlimited retries and a delay
+        if (
+            isinstance(e, requests.exceptions.HTTPError)
+            and e.response is not None
+            and e.response.status_code == HTTPStatus.TOO_MANY_REQUESTS
+        ):
+            retry_after = e.response.headers.get("Retry-After")
+            countdown = 300  # Default delay: 5 minutes
+            with contextlib.suppress(ValueError, TypeError):
+                countdown = int(retry_after)
+            logger.warning(
+                "Rate limit (429) for user %s, retrying in %s seconds (no retry limit)",
+                user.username,
+                countdown,
+            )
+            # Re-queue the task with a delay — no retry limit for 429 errors
+            self.apply_async(args=[user_id], countdown=countdown)
+            return {
+                "success": False,
+                "error": "Rate limited (429)",
+                "username": user.username,
+                "retry_in": countdown,
+            }
 
         # Determine if this is a retryable error
         retryable_keywords = [
