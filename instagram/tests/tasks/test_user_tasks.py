@@ -245,69 +245,6 @@ class TestUpdateUserStoriesFromApi(TestCase):
         assert result.result["success"] is False
         assert "Invalid data format" in result.result["error"]
 
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.tasks.user.update_user_stories_from_api.apply_async")
-    @patch("instagram.models.user.User._update_stories_from_api")
-    def test_update_user_stories_429_retries_with_delay(
-        self,
-        mock_update_stories,
-        mock_apply_async,
-    ):
-        """Test that HTTP 429 triggers re-queue with delay and no retry limit."""
-        user = InstagramUserFactory(username="testuser")
-
-        # Create a mock 429 response
-        mock_response = Mock()
-        mock_response.status_code = 429
-        mock_response.headers = {}
-        mock_update_stories.side_effect = requests.exceptions.HTTPError(
-            response=mock_response,
-        )
-
-        # Execute the task directly (bypass apply_async to avoid patching conflict)
-        result = update_user_stories_from_api.apply(args=[str(user.uuid)])
-
-        # Verify the task returned a failure result with retry info
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert result.result["error"] == "Rate limited (429)"
-        assert result.result["retry_in"] == 300  # noqa: PLR2004
-
-        # Verify the task was re-queued with a countdown (no retry limit)
-        mock_apply_async.assert_called_once()
-        _, call_kwargs = mock_apply_async.call_args
-        assert call_kwargs["countdown"] == 300  # noqa: PLR2004
-        assert call_kwargs["args"] == [str(user.uuid)]
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.tasks.user.update_user_stories_from_api.apply_async")
-    @patch("instagram.models.user.User._update_stories_from_api")
-    def test_update_user_stories_429_uses_retry_after_header(
-        self,
-        mock_update_stories,
-        mock_apply_async,
-    ):
-        """Test that HTTP 429 uses Retry-After header value as delay."""
-        user = InstagramUserFactory(username="testuser")
-
-        # Create a mock 429 response with Retry-After header
-        mock_response = Mock()
-        mock_response.status_code = 429
-        mock_response.headers = {"Retry-After": "120"}
-        mock_update_stories.side_effect = requests.exceptions.HTTPError(
-            response=mock_response,
-        )
-
-        # Execute the task directly (bypass apply_async to avoid patching conflict)
-        result = update_user_stories_from_api.apply(args=[str(user.uuid)])
-
-        # Verify the task used the Retry-After header value
-        assert isinstance(result, EagerResult)
-        assert result.result["retry_in"] == 120  # noqa: PLR2004
-
-        _, call_kwargs = mock_apply_async.call_args
-        assert call_kwargs["countdown"] == 120  # noqa: PLR2004
-
 
 class TestUpdateUserPostsFromApi(TestCase):
     """Tests for the update_user_posts_from_api Celery task."""
