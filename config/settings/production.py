@@ -26,7 +26,7 @@ CSRF_TRUSTED_ORIGINS = [
 
 # DATABASES
 # ------------------------------------------------------------------------------
-# DATABASES["default"]["CONN_MAX_AGE"] = env.int("CONN_MAX_AGE", default=60)
+# DATABASES["default"]["CONN_MAX_AGE"] = env.int("CONN_MAX_AGE", default=60)  # noqa: ERA001
 # https://docs.djangoproject.com/en/dev/ref/settings/#conn-health-checks
 DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 # https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNECT-CONNECT-TIMEOUT
