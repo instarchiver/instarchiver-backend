@@ -2,7 +2,6 @@ from io import BytesIO
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-import pytest
 from celery.result import EagerResult
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
@@ -436,17 +435,17 @@ class TestModerateStoryContent(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     @patch("instagram.signals.story.download_file_from_url")
     def test_exception_exhausts_retries(self, mock_download):
-        """Test that exceptions trigger retries until they are exhausted."""
+        """Test that exceptions trigger retries and the task ultimately fails."""
         mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="")
         story.thumbnail = _make_image_file()
         story.save()
 
-        with (
-            patch.object(Story, "moderate_content", side_effect=Exception("API down")),
-            pytest.raises(Exception, match="API down"),
-        ):
-            moderate_story_content.delay(story.story_id)
+        with patch.object(Story, "moderate_content", side_effect=Exception("API down")):
+            result = moderate_story_content.delay(story.story_id)
+
+        assert isinstance(result, EagerResult)
+        assert result.failed()
 
 
 class TestPeriodicModerateStoryContent(TestCase):
