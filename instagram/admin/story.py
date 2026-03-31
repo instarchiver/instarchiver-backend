@@ -31,6 +31,7 @@ class StoryAdmin(ModelAdmin):
         "thumbnail_insight",
         "thumbnail_insight_token_usage",
         "embedding_token_usage",
+        "moderation_result",
     ]
     fieldsets = (
         (
@@ -54,6 +55,17 @@ class StoryAdmin(ModelAdmin):
                 "fields": (
                     "created_at",
                     "raw_api_data",
+                ),
+                "classes": ["tab"],
+            },
+        ),
+        (
+            "Moderation",
+            {
+                "fields": (
+                    "moderated_at",
+                    "is_flagged",
+                    "moderation_result",
                 ),
                 "classes": ["tab"],
             },

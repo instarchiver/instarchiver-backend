@@ -98,3 +98,37 @@ def generate_text_embedding(text: str) -> tuple[list[float], int]:
     except Exception:
         logger.exception("Failed to generate embedding for text")
         raise
+
+
+def moderate_image_content(image_url: str) -> dict:
+    """Moderate image content using OpenAI's moderation API.
+
+    Args:
+        image_url: URL of the image to be moderated
+
+    Returns:
+        Moderation result as a dictionary containing flagged status and categories
+
+    Raises:
+        ImproperlyConfigured: If OpenAI settings are not configured
+        ValueError: If image_url is empty or invalid
+        Exception: If the API request fails
+    """
+    if not image_url or not image_url.strip():
+        msg = "Image URL cannot be empty for content moderation"
+        raise ValueError(msg)
+
+    try:
+        client = get_openai_client()
+        response = client.moderations.create(
+            model="omni-moderation-latest",
+            input=[{"type": "image_url", "image_url": {"url": image_url}}],
+        )
+
+        result = response.results[0]
+
+        return result.dict()  # Convert OpenAI response object to a regular dictionary
+
+    except Exception:
+        logger.exception("Failed to moderate image content for URL %s", image_url)
+        raise
