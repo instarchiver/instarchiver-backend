@@ -73,6 +73,7 @@ DJANGO_APPS = [
     "django.contrib.staticfiles",
     # "django.contrib.humanize", # Handy template tags
     "unfold",
+    "unfold.contrib.filters",
     "unfold.contrib.simple_history",
     "unfold.contrib.forms",
     "django.contrib.admin",

@@ -1,5 +1,6 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin
+from unfold.contrib.filters.admin import AutocompleteSelectMultipleFilter
 
 from instagram.models import Story
 
@@ -13,7 +14,7 @@ class StoryAdmin(ModelAdmin):
         "story_created_at",
     ]
     list_filter = [
-        "user",
+        ["user", AutocompleteSelectMultipleFilter],
         "created_at",
         "story_created_at",
     ]
