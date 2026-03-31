@@ -9,12 +9,14 @@ from instagram.models import Story
 class StoryAdmin(ModelAdmin):
     list_display = [
         "story_id",
+        "is_flagged",
         "user",
         "created_at",
         "story_created_at",
     ]
     list_filter = [
         ["user", AutocompleteSelectMultipleFilter],
+        "is_flagged",
         "created_at",
         "story_created_at",
     ]
