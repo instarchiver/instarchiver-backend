@@ -241,7 +241,7 @@ class Story(InstagramModerationMixin):
             raise ValueError(msg)
 
         result = moderate_image_content(self.thumbnail.url)
-        self.is_flagged = result.get("is_flagged", False)
+        self.is_flagged = result.get("flagged", False)
         self.moderation_result = result
         self.moderated_at = timezone.localtime()
         self.save(update_fields=["is_flagged", "moderation_result", "moderated_at"])
