@@ -5,6 +5,7 @@ import pytest
 from django.test import TestCase
 
 from core.utils.openai import generate_text_embedding
+from core.utils.openai import moderate_image_content
 
 
 class TestGenerateTextEmbedding(TestCase):
@@ -109,4 +110,68 @@ class TestGenerateTextEmbedding(TestCase):
         mock_client.embeddings.create.assert_called_once_with(
             model="text-embedding-3-small",
             input=long_text,
+        )
+
+
+class TestModerateImageContent(TestCase):
+    """Tests for the moderate_image_content utility function."""
+
+    @patch("core.utils.openai.get_openai_client")
+    def test_moderate_image_content_success(self, mock_get_client):
+        """Test successful image content moderation."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_result = Mock()
+        mock_result.dict.return_value = {
+            "flagged": False,
+            "categories": {"sexual": False, "violence": False},
+            "category_scores": {"sexual": 0.001, "violence": 0.002},
+        }
+        mock_response.results = [mock_result]
+        mock_client.moderations.create.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        result = moderate_image_content("https://example.com/image.jpg")
+
+        assert isinstance(result, dict)
+        assert "flagged" in result
+
+    @patch("core.utils.openai.get_openai_client")
+    def test_moderate_image_content_empty_url(self, mock_get_client):
+        """Test that empty URL raises ValueError."""
+        with pytest.raises(ValueError, match="Image URL cannot be empty"):
+            moderate_image_content("")
+
+        with pytest.raises(ValueError, match="Image URL cannot be empty"):
+            moderate_image_content("   ")
+
+        mock_get_client.assert_not_called()
+
+    @patch("core.utils.openai.get_openai_client")
+    def test_moderate_image_content_api_error(self, mock_get_client):
+        """Test that API errors propagate."""
+        mock_client = Mock()
+        mock_client.moderations.create.side_effect = Exception("API Error")
+        mock_get_client.return_value = mock_client
+
+        with pytest.raises(Exception, match="API Error"):
+            moderate_image_content("https://example.com/image.jpg")
+
+    @patch("core.utils.openai.get_openai_client")
+    def test_moderate_image_content_calls_correct_model(self, mock_get_client):
+        """Test that the correct model and input format are used."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_result = Mock()
+        mock_result.dict.return_value = {"flagged": False}
+        mock_response.results = [mock_result]
+        mock_client.moderations.create.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        image_url = "https://example.com/photo.jpg"
+        moderate_image_content(image_url)
+
+        mock_client.moderations.create.assert_called_once_with(
+            model="omni-moderation-latest",
+            input=[{"type": "image_url", "image_url": {"url": image_url}}],
         )

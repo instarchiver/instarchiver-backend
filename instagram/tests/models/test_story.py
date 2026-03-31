@@ -8,6 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from PIL import Image
 
+from instagram.models.mixins import InstagramModerationMixin
 from instagram.tests.factories import StoryFactory
 
 
@@ -362,3 +363,73 @@ class TestStoryModel(TestCase):
 
         # Verify None returned
         assert result is None
+
+    # Moderate Content Tests
+    @patch("instagram.signals.story.download_file_from_url")
+    def test_moderate_content_raises_error_without_thumbnail(self, mock_download):
+        """Test that moderate_content raises ValueError when no thumbnail exists."""
+        mock_download.return_value = (None, None)
+        story = StoryFactory(thumbnail_url="")
+        story.thumbnail = None
+        story.save()
+
+        with pytest.raises(ValueError, match="Thumbnail is required"):
+            story.moderate_content()
+
+    @patch("instagram.models.story.moderate_image_content")
+    @patch("instagram.signals.story.download_file_from_url")
+    def test_moderate_content_success_flagged(self, mock_download, mock_moderate):
+        """Test moderate_content saves fields when content is flagged."""
+        mock_download.return_value = (None, None)
+        story = StoryFactory(thumbnail_url="")
+        story.thumbnail = self._create_test_image()
+        story.save()
+
+        mock_moderate.return_value = {
+            "is_flagged": True,
+            "categories": {"violence": True},
+        }
+
+        story.moderate_content()
+
+        story.refresh_from_db()
+        assert story.is_flagged is True
+        assert story.moderation_result == {
+            "is_flagged": True,
+            "categories": {"violence": True},
+        }
+        assert story.moderated_at is not None
+
+    @patch("instagram.models.story.moderate_image_content")
+    @patch("instagram.signals.story.download_file_from_url")
+    def test_moderate_content_success_not_flagged(self, mock_download, mock_moderate):
+        """Test moderate_content saves is_flagged=False when content is clean."""
+        mock_download.return_value = (None, None)
+        story = StoryFactory(thumbnail_url="")
+        story.thumbnail = self._create_test_image()
+        story.save()
+
+        mock_moderate.return_value = {"is_flagged": False, "categories": {}}
+
+        story.moderate_content()
+
+        story.refresh_from_db()
+        assert story.is_flagged is False
+        assert story.moderated_at is not None
+
+
+class TestInstagramModerationMixin(TestCase):
+    """Tests for InstagramModerationMixin methods."""
+
+    def test_moderate_content_raises_not_implemented(self):
+        """Test that the mixin's moderate_content raises NotImplementedError."""
+        story = StoryFactory()
+        with pytest.raises(NotImplementedError, match="Subclasses must implement"):
+            InstagramModerationMixin.moderate_content(story)
+
+    def test_str_returns_expected_format(self):
+        """Test that the mixin's __str__ returns flagged/moderated_at info."""
+        story = StoryFactory()
+        result = InstagramModerationMixin.__str__(story)
+        assert "Flagged:" in result
+        assert "Moderated At:" in result
