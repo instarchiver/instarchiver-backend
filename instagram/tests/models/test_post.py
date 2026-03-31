@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 from django.core.files.base import ContentFile
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from PIL import Image
 
@@ -685,3 +686,58 @@ class TestPostCaption(TestCase):
         # Verify caption defaults to empty string
         post = Post.objects.get(id="1111111111")
         assert post.caption == ""
+
+
+def _make_image_file():
+    """Return a minimal SimpleUploadedFile that looks like a JPEG."""
+    img = Image.new("RGB", (10, 10), color="red")
+    buf = BytesIO()
+    img.save(buf, format="JPEG")
+    buf.seek(0)
+    return SimpleUploadedFile("thumb.jpg", buf.read(), content_type="image/jpeg")
+
+
+class TestPostModerateContent(TestCase):
+    """Tests for Post.moderate_content() method."""
+
+    def test_moderate_content_raises_error_without_thumbnail(self):
+        """Test that moderate_content raises ValueError when no thumbnail exists."""
+        post = PostFactory(thumbnail_url="", raw_data=None)
+
+        with pytest.raises(ValueError, match="Thumbnail is required"):
+            post.moderate_content()
+
+    @patch("instagram.models.post.moderate_image_content")
+    def test_moderate_content_success_flagged(self, mock_moderate):
+        """Test moderate_content saves fields when content is flagged."""
+        post = PostFactory(thumbnail_url="", raw_data=None)
+        post.thumbnail.save("thumb.jpg", _make_image_file(), save=True)
+
+        mock_moderate.return_value = {
+            "is_flagged": True,
+            "categories": {"violence": True},
+        }
+
+        post.moderate_content()
+
+        post.refresh_from_db()
+        assert post.is_flagged is True
+        assert post.moderation_result == {
+            "is_flagged": True,
+            "categories": {"violence": True},
+        }
+        assert post.moderated_at is not None
+
+    @patch("instagram.models.post.moderate_image_content")
+    def test_moderate_content_success_not_flagged(self, mock_moderate):
+        """Test moderate_content saves is_flagged=False when content is clean."""
+        post = PostFactory(thumbnail_url="", raw_data=None)
+        post.thumbnail.save("thumb.jpg", _make_image_file(), save=True)
+
+        mock_moderate.return_value = {"is_flagged": False, "categories": {}}
+
+        post.moderate_content()
+
+        post.refresh_from_db()
+        assert post.is_flagged is False
+        assert post.moderated_at is not None
