@@ -30,7 +30,7 @@ django-extensions==4.1  # https://github.com/django-extensions/django-extensions
 pgvector==0.4.2  # https://github.com/pgvector/pgvector
 django-prometheus==2.4.1  # https://github.com/django-commons/django-prometheus
 # Django REST Framework
-djangorestframework==3.16.1  # https://github.com/encode/django-rest-framework
+djangorestframework==3.17.1  # https://github.com/encode/django-rest-framework
 django-cors-headers==4.9.0  # https://github.com/adamchainz/django-cors-headers
 djangorestframework-simplejwt==5.5.1  # https://pypi.org/project/djangorestframework-simplejwt/
 # DRF-spectacular for api documentation
