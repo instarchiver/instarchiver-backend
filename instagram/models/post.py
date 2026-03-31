@@ -9,11 +9,13 @@ from PIL import Image
 from simple_history.models import HistoricalRecords
 
 from core.utils.openai import get_openai_client
+from core.utils.openai import moderate_image_content
 from instagram.misc import get_post_media_upload_location
+from instagram.models.mixins import InstagramModerationMixin
 from instagram.models.user import User
 
 
-class Post(models.Model):
+class Post(InstagramModerationMixin):
     POST_VARIANT_NORMAL = "normal"
     POST_VARIANT_CAROUSEL = "carousel"
     POST_VARIANT_VIDEO = "video"
@@ -244,6 +246,28 @@ class Post(models.Model):
         except Exception:
             logger.exception("Failed to generate embedding for post %s", self.id)
             return None
+
+    def moderate_content(self):
+        """
+        Moderate the post content using OpenAI's content moderation API.
+        """
+        if not self.thumbnail:
+            msg = "Thumbnail is required for content moderation"
+            raise ValueError(msg)
+
+        result = moderate_image_content(self.thumbnail.url)
+        self.is_flagged = result.get("is_flagged", False)
+        self.moderation_result = result
+        self.moderated_at = timezone.localtime()
+        self.save(update_fields=["is_flagged", "moderation_result", "moderated_at"])
+
+    def moderate_content_task(self):
+        """
+        Queues post content moderation as a background task.
+        """
+        from instagram.tasks import moderate_post_content  # noqa: PLC0415
+
+        moderate_post_content.delay(self.id)
 
     def process_post_by_type(self):
         """

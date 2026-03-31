@@ -35,11 +35,13 @@ class PostAdmin(SimpleHistoryAdmin, ModelAdmin):
         "id",
         "user",
         "variant",
+        "is_flagged",
         "created_at",
         "updated_at",
     ]
     list_filter = [
         "variant",
+        "is_flagged",
         "created_at",
         "updated_at",
     ]
@@ -64,6 +66,7 @@ class PostAdmin(SimpleHistoryAdmin, ModelAdmin):
         "thumbnail_insight_token_usage",
         "embedding_token_usage",
         "caption",
+        "moderation_result",
     ]
     fieldsets = (
         (
@@ -88,6 +91,17 @@ class PostAdmin(SimpleHistoryAdmin, ModelAdmin):
                 "fields": (
                     ("created_at", "updated_at"),
                     "raw_data",
+                ),
+                "classes": ["tab"],
+            },
+        ),
+        (
+            "Moderation",
+            {
+                "fields": (
+                    "moderated_at",
+                    "is_flagged",
+                    "moderation_result",
                 ),
                 "classes": ["tab"],
             },

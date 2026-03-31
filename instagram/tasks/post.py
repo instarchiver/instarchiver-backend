@@ -1120,3 +1120,101 @@ def periodic_generate_post_embeddings():
     except Exception as e:
         logger.exception("Critical error in periodic_generate_post_embeddings")
         return {"success": False, "error": f"Critical error: {e!s}"}
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def moderate_post_content(self, post_id: str) -> dict:
+    """
+    Moderate the content of a single post using OpenAI's moderation API.
+    This task is retryable with exponential backoff.
+
+    Args:
+        post_id: The primary key of the Post to moderate.
+
+    Returns:
+        dict: Result summary with success status and post_id.
+    """
+    try:
+        post = Post.objects.get(id=post_id)
+        post.moderate_content()
+        logger.info("Successfully moderated post %s", post_id)
+        return {"success": True, "post_id": post_id}  # noqa: TRY300
+    except Post.DoesNotExist:
+        logger.exception("Post %s not found", post_id)
+        return {"success": False, "post_id": post_id, "error": "Post not found"}
+    except Exception as exc:
+        logger.exception("Error moderating post %s", post_id)
+        raise self.retry(exc=exc)  # noqa: B904
+
+
+@shared_task
+def periodic_moderate_post_content():
+    """
+    Automatically moderate posts that have thumbnails but have not been moderated yet.
+    This task is designed to be run periodically via Celery Beat.
+
+    Returns:
+        dict: Summary of operations performed.
+    """
+    try:
+        posts = Post.objects.filter(
+            thumbnail__isnull=False,
+            moderated_at__isnull=True,
+        )
+        total_posts = posts.count()
+
+        if total_posts == 0:
+            logger.info("No posts found pending moderation")
+            return {
+                "success": True,
+                "message": "No posts to process",
+                "queued": 0,
+                "errors": 0,
+            }
+
+        logger.info("Starting content moderation for %d posts", total_posts)
+
+        queued_count = 0
+        error_count = 0
+        errors = []
+        task_ids = []
+
+        for post in posts:
+            try:
+                task_result = moderate_post_content.delay(post.id)
+                task_ids.append(task_result.id)
+                queued_count += 1
+                logger.info(
+                    "Successfully queued moderation for post: %s (task: %s)",
+                    post.id,
+                    task_result.id,
+                )
+            except Exception as e:
+                error_count += 1
+                error_msg = f"Failed to queue moderation for post {post.id}: {e!s}"
+                errors.append(error_msg)
+                logger.exception(
+                    "Error queuing moderation for post %s",
+                    post.id,
+                )
+
+        logger.info(
+            "Content moderation queuing completed: %d queued, %d errors out of %d total posts",  # noqa: E501
+            queued_count,
+            error_count,
+            total_posts,
+        )
+
+        return {  # noqa: TRY300
+            "success": True,
+            "message": "Content moderation tasks queued",
+            "total": total_posts,
+            "queued": queued_count,
+            "errors": error_count,
+            "error_details": errors if errors else None,
+            "task_ids": task_ids,
+        }
+
+    except Exception as e:
+        logger.exception("Critical error in periodic_moderate_post_content")
+        return {"success": False, "error": f"Critical error: {e!s}"}
