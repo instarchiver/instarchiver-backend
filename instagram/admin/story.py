@@ -1,5 +1,6 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin
+from unfold.contrib.filters.admin import AutocompleteSelectMultipleFilter
 
 from instagram.models import Story
 
@@ -13,7 +14,7 @@ class StoryAdmin(ModelAdmin):
         "story_created_at",
     ]
     list_filter = [
-        "user",
+        ["user", AutocompleteSelectMultipleFilter],
         "created_at",
         "story_created_at",
     ]
@@ -31,6 +32,7 @@ class StoryAdmin(ModelAdmin):
         "thumbnail_insight",
         "thumbnail_insight_token_usage",
         "embedding_token_usage",
+        "moderation_result",
     ]
     fieldsets = (
         (
@@ -54,6 +56,17 @@ class StoryAdmin(ModelAdmin):
                 "fields": (
                     "created_at",
                     "raw_api_data",
+                ),
+                "classes": ["tab"],
+            },
+        ),
+        (
+            "Moderation",
+            {
+                "fields": (
+                    "moderated_at",
+                    "is_flagged",
+                    "moderation_result",
                 ),
                 "classes": ["tab"],
             },

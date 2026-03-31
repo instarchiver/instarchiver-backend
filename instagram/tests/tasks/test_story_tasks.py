@@ -6,14 +6,17 @@ from celery.result import EagerResult
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.test import override_settings
+from django.utils import timezone
 from PIL import Image
 
 from instagram.models import Story
 from instagram.tasks import auto_generate_story_blur_data_urls
 from instagram.tasks import generate_story_embedding
 from instagram.tasks import generate_story_thumbnail_insight
+from instagram.tasks import moderate_story_content
 from instagram.tasks import periodic_generate_story_embeddings
 from instagram.tasks import periodic_generate_story_thumbnail_insights
+from instagram.tasks import periodic_moderate_story_content
 from instagram.tests.factories import StoryFactory
 
 
@@ -396,6 +399,125 @@ class TestGenerateStoryEmbeddingRetryPaths(TestCase):
             side_effect=Exception("DB crash"),
         ):
             result = periodic_generate_story_embeddings.delay()
+
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is False
+        assert "Critical error" in result.result["error"]
+
+
+class TestModerateStoryContent(TestCase):
+    """Tests for the moderate_story_content Celery task."""
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_story_not_found(self):
+        """Test task returns error when story does not exist."""
+        result = moderate_story_content.delay("nonexistent-story-id")
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is False
+        assert "not found" in result.result["error"].lower()
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.signals.story.download_file_from_url")
+    def test_success(self, mock_download):
+        """Test successful story moderation."""
+        mock_download.return_value = (None, None)
+        story = StoryFactory(thumbnail_url="")
+        story.thumbnail = _make_image_file()
+        story.save()
+
+        with patch.object(Story, "moderate_content"):
+            result = moderate_story_content.delay(story.story_id)
+
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is True
+        assert result.result["story_id"] == story.story_id
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.signals.story.download_file_from_url")
+    def test_exception_exhausts_retries(self, mock_download):
+        """Test that exceptions trigger retries and the task ultimately fails."""
+        mock_download.return_value = (None, None)
+        story = StoryFactory(thumbnail_url="")
+        story.thumbnail = _make_image_file()
+        story.save()
+
+        with patch.object(Story, "moderate_content", side_effect=Exception("API down")):
+            result = moderate_story_content.delay(story.story_id)
+
+        assert isinstance(result, EagerResult)
+        assert result.failed()
+
+
+class TestPeriodicModerateStoryContent(TestCase):
+    """Tests for the periodic_moderate_story_content Celery task."""
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_no_stories_to_process(self):
+        """Test task returns early when no stories need moderation."""
+        Story.objects.all().delete()
+        result = periodic_moderate_story_content.delay()
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is True
+        assert result.result["queued"] == 0
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.tasks.moderate_story_content.delay")
+    @patch("instagram.signals.story.download_file_from_url")
+    def test_queues_tasks_for_eligible_stories(self, mock_download, mock_task_delay):
+        """Test that tasks are queued for stories with thumbnails but no moderation."""
+        mock_download.return_value = (None, None)
+        story = StoryFactory(thumbnail_url="")
+        story.thumbnail = _make_image_file()
+        story.save()
+
+        mock_result = MagicMock()
+        mock_result.id = "mod-task-1"
+        mock_task_delay.return_value = mock_result
+
+        result = periodic_moderate_story_content.delay()
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is True
+        assert result.result["queued"] >= 1
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.signals.story.download_file_from_url")
+    def test_already_moderated_stories_skipped(self, mock_download):
+        """Test that stories with moderated_at set are not re-queued."""
+        mock_download.return_value = (None, None)
+        story = StoryFactory(thumbnail_url="")
+        story.thumbnail = _make_image_file()
+        story.moderated_at = timezone.now()
+        story.save()
+
+        result = periodic_moderate_story_content.delay()
+        assert isinstance(result, EagerResult)
+        assert result.result["queued"] == 0
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.tasks.moderate_story_content.delay")
+    @patch("instagram.signals.story.download_file_from_url")
+    def test_error_handling(self, mock_download, mock_task_delay):
+        """Test that individual queuing errors are tracked."""
+        mock_download.return_value = (None, None)
+        story = StoryFactory(thumbnail_url="")
+        story.thumbnail = _make_image_file()
+        story.save()
+
+        mock_task_delay.side_effect = Exception("Queue full")
+
+        result = periodic_moderate_story_content.delay()
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is True
+        assert result.result["errors"] >= 1
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_critical_error(self):
+        """Test that DB errors in periodic_moderate_story_content are handled."""
+        with patch(
+            "instagram.tasks.story.Story.objects.filter",
+            side_effect=Exception("DB down"),
+        ):
+            result = periodic_moderate_story_content.delay()
 
         assert isinstance(result, EagerResult)
         assert result.result["success"] is False

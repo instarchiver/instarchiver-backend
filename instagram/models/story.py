@@ -3,14 +3,17 @@ import logging
 from io import BytesIO
 
 from django.db import models
+from django.utils import timezone
 from pgvector.django import VectorField
 from PIL import Image
 
 from core.utils.openai import get_openai_client
+from core.utils.openai import moderate_image_content
 from instagram.misc import get_user_story_upload_location
+from instagram.models.mixins import InstagramModerationMixin
 
 
-class Story(models.Model):
+class Story(InstagramModerationMixin):
     story_id = models.CharField(unique=True, max_length=50, primary_key=True)
     user = models.ForeignKey("instagram.User", on_delete=models.CASCADE)
     thumbnail_url = models.URLField(max_length=2500, blank=True)
@@ -227,6 +230,21 @@ class Story(models.Model):
         except Exception:
             logger.exception("Failed to generate embedding for story %s", self.story_id)
             return None
+
+    def moderate_content(self):
+        """
+        Moderate the story content using OpenAI's content moderation API.
+        """
+
+        if not self.thumbnail:
+            msg = "Thumbnail is required for content moderation"
+            raise ValueError(msg)
+
+        result = moderate_image_content(self.thumbnail.url)
+        self.is_flagged = result.get("is_flagged", False)
+        self.moderation_result = result
+        self.moderated_at = timezone.localtime()
+        self.save(update_fields=["is_flagged", "moderation_result", "moderated_at"])
 
 
 class UserUpdateStoryLog(models.Model):
