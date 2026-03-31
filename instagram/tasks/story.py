@@ -555,3 +555,103 @@ def periodic_generate_story_embeddings():
     except Exception as e:
         logger.exception("Critical error in periodic_generate_story_embeddings")
         return {"success": False, "error": f"Critical error: {e!s}"}
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def moderate_story_content(self, story_id: str) -> dict:
+    """
+    Moderate the content of a single story using OpenAI's moderation API.
+    This task is retryable with exponential backoff.
+
+    Args:
+        story_id: The primary key of the Story to moderate.
+
+    Returns:
+        dict: Result summary with success status and story_id.
+    """
+    try:
+        story = Story.objects.get(story_id=story_id)
+        story.moderate_content()
+        logger.info("Successfully moderated story %s", story_id)
+        return {"success": True, "story_id": story_id}  # noqa: TRY300
+    except Story.DoesNotExist:
+        logger.exception("Story %s not found", story_id)
+        return {"success": False, "story_id": story_id, "error": "Story not found"}
+    except Exception as exc:
+        logger.exception("Error moderating story %s", story_id)
+        raise self.retry(exc=exc)  # noqa: B904
+
+
+@shared_task
+def periodic_moderate_story_content():
+    """
+    Automatically moderate stories that have thumbnails but have not been moderated yet.
+    This task is designed to be run periodically via Celery Beat.
+
+    Returns:
+        dict: Summary of operations performed.
+    """
+    try:
+        stories = Story.objects.filter(
+            thumbnail__isnull=False,
+            moderated_at__isnull=True,
+        )
+        total_stories = stories.count()
+
+        if total_stories == 0:
+            logger.info("No stories found pending moderation")
+            return {
+                "success": True,
+                "message": "No stories to process",
+                "queued": 0,
+                "errors": 0,
+            }
+
+        logger.info("Starting content moderation for %d stories", total_stories)
+
+        queued_count = 0
+        error_count = 0
+        errors = []
+        task_ids = []
+
+        for story in stories:
+            try:
+                task_result = moderate_story_content.delay(story.story_id)
+                task_ids.append(task_result.id)
+                queued_count += 1
+                logger.info(
+                    "Successfully queued moderation for story: %s (task: %s)",
+                    story.story_id,
+                    task_result.id,
+                )
+            except Exception as e:
+                error_count += 1
+                error_msg = (
+                    f"Failed to queue moderation for story {story.story_id}: {e!s}"
+                )
+                errors.append(error_msg)
+                logger.exception(
+                    "Error queuing moderation for story %s",
+                    story.story_id,
+                )
+
+        logger.info(
+            "Content moderation queuing completed: %d queued, %d errors out of %d total stories",  # noqa: E501
+            queued_count,
+            error_count,
+            total_stories,
+        )
+
+        return {  # noqa: TRY300
+            "success": True,
+            "message": "Content moderation tasks queued",
+            "total": total_stories,
+            "queued": queued_count,
+            "errors": error_count,
+            "error_details": errors if errors else None,
+            "task_ids": task_ids,
+        }
+
+    except Exception as e:
+        logger.exception("Critical error in periodic_moderate_story_content")
+        return {"success": False, "error": f"Critical error: {e!s}"}

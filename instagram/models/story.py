@@ -237,9 +237,6 @@ class Story(InstagramModerationMixin):
             raise ValueError(msg)
 
         result = moderate_image_content(self.thumbnail.url)
-        result = moderate_image_content(
-            "https://cdn.instarchiver.net/users/takagi.zip/stories/41eb3b70-12da-4219-9a08-5b302b6cc72c.jpg",
-        )
         self.is_flagged = result.get("is_flagged", False)
         self.moderation_result = result
         self.moderated_at = timezone.localtime()
