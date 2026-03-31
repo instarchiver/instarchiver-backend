@@ -232,6 +232,10 @@ class Story(InstagramModerationMixin):
             return None
 
     def moderate_content(self):
+        """
+        Moderate the story content using OpenAI's content moderation API.
+        """
+
         if not self.thumbnail:
             msg = "Thumbnail is required for content moderation"
             raise ValueError(msg)
