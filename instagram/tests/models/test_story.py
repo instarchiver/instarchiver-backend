@@ -386,7 +386,7 @@ class TestStoryModel(TestCase):
         story.save()
 
         mock_moderate.return_value = {
-            "is_flagged": True,
+            "flagged": True,
             "categories": {"violence": True},
         }
 
@@ -395,7 +395,7 @@ class TestStoryModel(TestCase):
         story.refresh_from_db()
         assert story.is_flagged is True
         assert story.moderation_result == {
-            "is_flagged": True,
+            "flagged": True,
             "categories": {"violence": True},
         }
         assert story.moderated_at is not None
