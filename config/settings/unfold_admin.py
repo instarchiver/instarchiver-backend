@@ -154,6 +154,11 @@ UNFOLD = {
                 "collapsible": True,
                 "items": [
                     {
+                        "title": "Pricing Plans",
+                        "icon": "local_offer",
+                        "link": "/admin/payments/pricingplan/",
+                    },
+                    {
                         "title": "Payments",
                         "icon": "payment",
                         "link": "/admin/payments/payment/",

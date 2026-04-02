@@ -6,6 +6,8 @@ from factory.django import DjangoModelFactory
 from core.users.tests.factories import UserFactory
 from payments.models import GatewayOption
 from payments.models import Payment
+from payments.models import PricingFeature
+from payments.models import PricingPlan
 
 
 class PaymentFactory(DjangoModelFactory):
@@ -130,6 +132,42 @@ class PaymentFactory(DjangoModelFactory):
                     "mode": "payment",
                 },
             ),
+        )
+
+
+class PricingPlanFactory(DjangoModelFactory):
+    name = Faker("word")
+    description = Faker("sentence")
+    billing_period = PricingPlan.BILLING_MONTHLY
+    price = Faker("pydecimal", left_digits=4, right_digits=2, positive=True)
+    currency = PricingPlan.CURRENCY_USD
+    is_active = True
+    sort_order = 0
+
+    class Meta:
+        model = PricingPlan
+
+    class Params:
+        annual = factory.Trait(
+            billing_period=PricingPlan.BILLING_ANNUAL,
+        )
+        inactive = factory.Trait(
+            is_active=False,
+        )
+
+
+class PricingFeatureFactory(DjangoModelFactory):
+    plan = SubFactory(PricingPlanFactory)
+    label = Faker("sentence", nb_words=4)
+    is_available = True
+    sort_order = 0
+
+    class Meta:
+        model = PricingFeature
+
+    class Params:
+        unavailable = factory.Trait(
+            is_available=False,
         )
 
 
