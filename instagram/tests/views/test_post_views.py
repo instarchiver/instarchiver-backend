@@ -102,6 +102,7 @@ class PostListViewTest(TestCase):
             "thumbnail",
             "blur_data_url",
             "media_count",
+            "is_flagged",
             "created_at",
             "updated_at",
             "user",
@@ -109,6 +110,26 @@ class PostListViewTest(TestCase):
 
         for field in expected_fields:
             assert field in first_post, f"Field '{field}' missing from response"
+
+    def test_is_flagged_false_by_default(self):
+        """Test that is_flagged defaults to False for new posts."""
+        PostFactory(is_flagged=False)
+
+        response = self.client.get(self.url)
+
+        assert response.status_code == status.HTTP_200_OK
+        first_post = response.data["results"][0]
+        assert first_post["is_flagged"] is False
+
+    def test_is_flagged_true_for_flagged_post(self):
+        """Test that is_flagged is True for flagged posts."""
+        PostFactory(is_flagged=True)
+
+        response = self.client.get(self.url)
+
+        assert response.status_code == status.HTTP_200_OK
+        first_post = response.data["results"][0]
+        assert first_post["is_flagged"] is True
 
     def test_nested_user_structure(self):
         """Test that nested user object contains expected fields."""
@@ -613,6 +634,7 @@ class PostDetailViewTest(TestCase):
             "thumbnail",
             "blur_data_url",
             "media",
+            "is_flagged",
             "created_at",
             "updated_at",
             "user",
@@ -620,6 +642,26 @@ class PostDetailViewTest(TestCase):
 
         for field in expected_fields:
             assert field in response.data, f"Field '{field}' missing from response"
+
+    def test_is_flagged_false_by_default(self):
+        """Test that is_flagged defaults to False for new posts."""
+        post = PostFactory(is_flagged=False)
+
+        url = reverse("instagram:post_detail", kwargs={"id": post.id})
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["is_flagged"] is False
+
+    def test_is_flagged_true_for_flagged_post(self):
+        """Test that is_flagged is True for flagged posts."""
+        post = PostFactory(is_flagged=True)
+
+        url = reverse("instagram:post_detail", kwargs={"id": post.id})
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["is_flagged"] is True
 
     def test_nested_user_detail_structure(self):
         """Test that nested user object contains detailed fields."""
@@ -1156,6 +1198,7 @@ class PostSimilarViewTest(TestCase):
             "thumbnail",
             "blur_data_url",
             "media_count",
+            "is_flagged",
             "created_at",
             "updated_at",
             "user",

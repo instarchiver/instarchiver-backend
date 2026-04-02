@@ -52,6 +52,7 @@ class StoryListView(ListAPIView):
                 "thumbnail",
                 "blur_data_url",
                 "media",
+                "is_flagged",
                 "created_at",
                 "story_created_at",
             )
