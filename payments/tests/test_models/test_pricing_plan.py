@@ -2,7 +2,9 @@ from decimal import Decimal
 
 from django.test import TestCase
 
+from payments.models import PricingFeature
 from payments.models import PricingPlan
+from payments.tests.factories import PricingFeatureFactory
 from payments.tests.factories import PricingPlanFactory
 
 
@@ -20,7 +22,6 @@ class PricingPlanModelTest(TestCase):
         assert isinstance(plan.price, Decimal)
         assert plan.price > 0
         assert plan.currency == PricingPlan.CURRENCY_USD
-        assert isinstance(plan.features, list)
         assert plan.is_active is True
         assert plan.sort_order == 0
         assert plan.created_at is not None
@@ -85,3 +86,61 @@ class PricingPlanModelTest(TestCase):
         plans = list(PricingPlan.objects.all())
         assert plans[0].sort_order <= plans[1].sort_order
         assert plans[1].name <= plans[2].name
+
+
+class PricingFeatureModelTest(TestCase):
+    """Test suite for the PricingFeature model."""
+
+    def test_factory_creates_instance(self):
+        """Test that the factory creates a pricing feature instance."""
+        feature = PricingFeatureFactory()
+
+        assert isinstance(feature, PricingFeature)
+        assert feature.id is not None
+        assert feature.label
+        assert feature.is_available is True
+        assert feature.sort_order == 0
+        assert isinstance(feature.plan, PricingPlan)
+
+    def test_str_representation(self):
+        """Test the string representation of a pricing feature."""
+        plan = PricingPlanFactory(
+            name="Pro",
+            billing_period=PricingPlan.BILLING_MONTHLY,
+        )
+        feature = PricingFeatureFactory(plan=plan, label="Unlimited storage")
+        assert str(feature) == "Pro (monthly) — Unlimited storage"
+
+    def test_unavailable_trait(self):
+        """Test the unavailable factory trait sets is_available to False."""
+        feature = PricingFeatureFactory(unavailable=True)
+        assert feature.is_available is False
+
+    def test_related_name_from_plan(self):
+        """Test that features are accessible via plan.features."""
+        plan = PricingPlanFactory()
+        PricingFeatureFactory(plan=plan, label="Feature A", sort_order=0)
+        PricingFeatureFactory(plan=plan, label="Feature B", sort_order=1)
+
+        assert plan.features.count() == 2  # noqa: PLR2004
+
+    def test_cascade_delete(self):
+        """Test that features are deleted when their plan is deleted."""
+        plan = PricingPlanFactory()
+        PricingFeatureFactory(plan=plan)
+        PricingFeatureFactory(plan=plan)
+
+        plan_id = plan.id
+        plan.delete()
+
+        assert PricingFeature.objects.filter(plan_id=plan_id).count() == 0
+
+    def test_ordering(self):
+        """Test that features are ordered by sort_order."""
+        plan = PricingPlanFactory()
+        PricingFeatureFactory(plan=plan, label="Last", sort_order=2)
+        PricingFeatureFactory(plan=plan, label="First", sort_order=0)
+        PricingFeatureFactory(plan=plan, label="Middle", sort_order=1)
+
+        labels = list(plan.features.values_list("label", flat=True))
+        assert labels == ["First", "Middle", "Last"]
