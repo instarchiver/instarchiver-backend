@@ -714,7 +714,7 @@ class TestPostModerateContent(TestCase):
         post.thumbnail.save("thumb.jpg", _make_image_file(), save=True)
 
         mock_moderate.return_value = {
-            "is_flagged": True,
+            "flagged": True,
             "categories": {"violence": True},
         }
 
@@ -723,7 +723,7 @@ class TestPostModerateContent(TestCase):
         post.refresh_from_db()
         assert post.is_flagged is True
         assert post.moderation_result == {
-            "is_flagged": True,
+            "flagged": True,
             "categories": {"violence": True},
         }
         assert post.moderated_at is not None
