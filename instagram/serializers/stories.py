@@ -16,6 +16,7 @@ class StoryListSerializer(serializers.ModelSerializer):
             "thumbnail",
             "blur_data_url",
             "media",
+            "is_flagged",
             "created_at",
             "story_created_at",
         ]
@@ -32,6 +33,7 @@ class StoryDetailSerializer(serializers.ModelSerializer):
             "thumbnail",
             "blur_data_url",
             "media",
+            "is_flagged",
             "created_at",
             "story_created_at",
         ]

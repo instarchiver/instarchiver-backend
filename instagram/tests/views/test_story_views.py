@@ -103,12 +103,33 @@ class StoryListViewTest(TestCase):
             "thumbnail",
             "blur_data_url",
             "media",
+            "is_flagged",
             "created_at",
             "story_created_at",
         ]
 
         for field in expected_fields:
             assert field in first_story, f"Field '{field}' missing from response"
+
+    def test_is_flagged_false_by_default(self):
+        """Test that is_flagged defaults to False for new stories."""
+        StoryFactory(is_flagged=False)
+
+        response = self.client.get(self.url)
+
+        assert response.status_code == status.HTTP_200_OK
+        first_story = response.data["results"][0]
+        assert first_story["is_flagged"] is False
+
+    def test_is_flagged_true_for_flagged_story(self):
+        """Test that is_flagged is True for flagged stories."""
+        StoryFactory(is_flagged=True)
+
+        response = self.client.get(self.url)
+
+        assert response.status_code == status.HTTP_200_OK
+        first_story = response.data["results"][0]
+        assert first_story["is_flagged"] is True
 
     def test_nested_user_structure(self):
         """Test that nested user object contains expected fields."""
@@ -589,12 +610,33 @@ class StoryDetailViewTest(TestCase):
             "thumbnail",
             "blur_data_url",
             "media",
+            "is_flagged",
             "created_at",
             "story_created_at",
         ]
 
         for field in expected_fields:
             assert field in response.data, f"Field '{field}' missing from response"
+
+    def test_is_flagged_false_by_default(self):
+        """Test that is_flagged defaults to False for new stories."""
+        story = StoryFactory(is_flagged=False)
+
+        url = reverse("instagram:story_detail", kwargs={"story_id": story.story_id})
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["is_flagged"] is False
+
+    def test_is_flagged_true_for_flagged_story(self):
+        """Test that is_flagged is True for flagged stories."""
+        story = StoryFactory(is_flagged=True)
+
+        url = reverse("instagram:story_detail", kwargs={"story_id": story.story_id})
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["is_flagged"] is True
 
     def test_nested_user_detail_structure(self):
         """Test that nested user object contains detailed fields."""
@@ -946,6 +988,7 @@ class StorySimilarViewTest(TestCase):
             "thumbnail",
             "blur_data_url",
             "media",
+            "is_flagged",
             "created_at",
             "story_created_at",
         ]
