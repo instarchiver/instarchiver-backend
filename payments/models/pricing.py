@@ -34,7 +34,6 @@ class PricingPlan(models.Model):
         choices=CURRENCY_CHOICES,
         default=CURRENCY_USD,
     )
-    features = models.JSONField(default=list)
     is_active = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
 
@@ -49,3 +48,22 @@ class PricingPlan(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.billing_period})"
+
+
+class PricingFeature(models.Model):
+    plan = models.ForeignKey(
+        PricingPlan,
+        on_delete=models.CASCADE,
+        related_name="features",
+    )
+    label = models.CharField(max_length=255)
+    is_available = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name = "Pricing Feature"
+        verbose_name_plural = "Pricing Features"
+        ordering = ["sort_order"]
+
+    def __str__(self):
+        return f"{self.plan} — {self.label}"

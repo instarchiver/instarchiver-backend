@@ -1,8 +1,17 @@
 from django.contrib import admin
 from simple_history.admin import SimpleHistoryAdmin
 from unfold.admin import ModelAdmin
+from unfold.admin import TabularInline
 
+from payments.models import PricingFeature
 from payments.models import PricingPlan
+
+
+class PricingFeatureInline(TabularInline):
+    model = PricingFeature
+    extra = 1
+    fields = ("label", "is_available", "sort_order")
+    tab = True
 
 
 @admin.register(PricingPlan)
@@ -18,21 +27,20 @@ class PricingPlanAdmin(SimpleHistoryAdmin, ModelAdmin):
     )
     list_filter = ("billing_period", "currency", "is_active")
     search_fields = ("name",)
+    inlines = [PricingFeatureInline]
 
     fieldsets = (
         (
-            "General",
+            None,
             {
                 "fields": (
                     "name",
                     "description",
                     ("billing_period", "currency"),
                     ("price", "sort_order"),
-                    "features",
                     "is_active",
                     ("created_at", "updated_at"),
                 ),
-                "classes": ["tab"],
             },
         ),
     )
