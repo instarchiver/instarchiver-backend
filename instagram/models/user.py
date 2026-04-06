@@ -10,6 +10,7 @@ from core.utils.instagram_api import fetch_user_info_by_username_v2
 from core.utils.instagram_api import fetch_user_posts_by_username
 from core.utils.instagram_api import fetch_user_stories_by_username
 from instagram.misc import get_user_profile_picture_upload_location
+from instagram.models.mixins import UserFollowMixin
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ class GetUserPostMixIn:
         return update_user_posts_from_api.delay(self.uuid)
 
 
-class User(models.Model, GetUserPostMixIn):
+class User(UserFollowMixin, GetUserPostMixIn, models.Model):
     uuid = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     instagram_id = models.CharField(max_length=50, unique=True, blank=True, null=True)

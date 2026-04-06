@@ -146,6 +146,11 @@ UNFOLD = {
                         "icon": "history",
                         "link": "/admin/instagram/storycreditpayment/",
                     },
+                    {
+                        "title": "User Follows",
+                        "icon": "people",
+                        "link": "/admin/instagram/userfollow/",
+                    },
                 ],
             },
             {
