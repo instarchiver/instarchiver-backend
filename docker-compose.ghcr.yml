@@ -17,6 +17,11 @@ services:
     env_file:
       - ./.envs/.production/.django
       - ./.envs/.production/.postgres
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
     command: /start
 
   postgres:
@@ -41,6 +46,11 @@ services:
     <<: *django
     image: ghcr.io/instarchiver/instarchiver-backend/django:latest
     command: /start-celeryworker
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
 
   celerybeat:
     <<: *django
