@@ -9,6 +9,62 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def download_story_thumbnail_from_url(self, story_id: str) -> dict:
+    """
+    Download thumbnail for a story from thumbnail_url.
+    Delegates to Story.download_thumbnail() and saves via queryset update
+    to avoid re-triggering the post_save signal.
+    """
+    try:
+        story = Story.objects.get(story_id=story_id)
+    except Story.DoesNotExist:
+        logger.exception("Story with ID %s not found", story_id)
+        return {"success": False, "error": "Story not found"}
+
+    try:
+        saved_name = story.download_thumbnail()
+        if saved_name:
+            Story.objects.filter(story_id=story_id).update(thumbnail=saved_name)
+            logger.info("Thumbnail downloaded for story %s", story_id)
+        return {
+            "success": True,
+            "story_id": story_id,
+            "downloaded": bool(saved_name),
+        }
+    except Exception as exc:
+        countdown = 60 * (2**self.request.retries)
+        raise self.retry(exc=exc, countdown=countdown) from exc
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def download_story_media_from_url(self, story_id: str) -> dict:
+    """
+    Download media file for a story from media_url.
+    Delegates to Story.download_media() and saves via queryset update
+    to avoid re-triggering the post_save signal.
+    """
+    try:
+        story = Story.objects.get(story_id=story_id)
+    except Story.DoesNotExist:
+        logger.exception("Story with ID %s not found", story_id)
+        return {"success": False, "error": "Story not found"}
+
+    try:
+        saved_name = story.download_media()
+        if saved_name:
+            Story.objects.filter(story_id=story_id).update(media=saved_name)
+            logger.info("Media downloaded for story %s", story_id)
+        return {
+            "success": True,
+            "story_id": story_id,
+            "downloaded": bool(saved_name),
+        }
+    except Exception as exc:
+        countdown = 60 * (2**self.request.retries)
+        raise self.retry(exc=exc, countdown=countdown) from exc
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def story_generate_blur_data_url(self, story_id: str) -> dict:
     """
     Generate blur data URL for a story in the background.

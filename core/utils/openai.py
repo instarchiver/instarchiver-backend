@@ -114,6 +114,7 @@ def moderate_image_content(image_url: str) -> dict:
         ValueError: If image_url is empty or invalid
         Exception: If the API request fails
     """
+
     if not image_url or not image_url.strip():
         msg = "Image URL cannot be empty for content moderation"
         raise ValueError(msg)
