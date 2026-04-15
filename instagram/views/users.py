@@ -1,9 +1,11 @@
 from datetime import timedelta
 
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Exists
 from django.db.models import OuterRef
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import filters
 from rest_framework import status
@@ -17,14 +19,19 @@ from rest_framework.views import APIView
 
 from instagram.models import Story
 from instagram.models import User as InstagramUser
+from instagram.models import UserFollow
 from instagram.paginations import InstagramUserCursorPagination
 from instagram.paginations import InstagramUserHistoryCursorPagination
+from instagram.paginations import UserFollowCursorPagination
+from instagram.serializers.user_follows import UserFollowSerializer
 from instagram.serializers.users import CreateInstagramUserStoryCreditSerializer
 from instagram.serializers.users import InstagramUserCreateSerializer
 from instagram.serializers.users import InstagramUserDetailSerializer
 from instagram.serializers.users import InstagramUserHistoryListSerializer
 from instagram.serializers.users import InstagramUserListSerializer
 from payments.utils import stripe_create_instagram_user_story_credits_payment
+
+CACHE_TTL = 60 * 5  # 5 minutes
 
 
 class InstagramUserListCreateView(ListCreateAPIView):
@@ -150,3 +157,102 @@ class InstagramUserAddStoryCreditAPIView(APIView):
         )
 
         return Response({"detail": "Payment created successfully."})
+
+
+class _UserFollowBaseListView(ListAPIView):
+    """Base view for followers/following list endpoints."""
+
+    serializer_class = UserFollowSerializer
+    pagination_class = UserFollowCursorPagination
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["follower__username", "follower__full_name"]
+    ordering_fields = ["first_seen_at", "follower__username"]
+    ordering = ["-first_seen_at"]
+
+    # Set by subclass
+    relationship = None
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["relationship"] = self.relationship
+        return ctx
+
+    def get(self, request, *args, **kwargs):
+        cache_key = f"user_follow:{kwargs['uuid']}:{self.relationship}:{request.query_params.urlencode()}"  # noqa: E501
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
+        response = super().get(request, *args, **kwargs)
+        cache.set(cache_key, response.data, timeout=CACHE_TTL)
+        return response
+
+
+class InstagramUserFollowersView(_UserFollowBaseListView):
+    """
+    List all active followers of an Instagram user.
+
+    Supports:
+    - ?is_mutual=true — filter to mutual followers only
+    - ?search= — filter by follower username or full name
+    - ?ordering= — order by first_seen_at or follower__username
+    """
+
+    relationship = "followers"
+    search_fields = ["follower__username", "follower__full_name"]
+    ordering_fields = ["first_seen_at", "follower__username"]
+
+    def get_queryset(self):
+        instagram_user = get_object_or_404(InstagramUser, uuid=self.kwargs["uuid"])
+        queryset = (
+            UserFollow.objects.filter(following=instagram_user, is_active=True)
+            .select_related("follower")
+            .annotate(
+                is_mutual=Exists(
+                    UserFollow.objects.filter(
+                        follower=instagram_user,
+                        following=OuterRef("follower"),
+                        is_active=True,
+                    ),
+                ),
+            )
+        )
+        is_mutual = self.request.query_params.get("is_mutual")
+        if is_mutual and is_mutual.lower() == "true":
+            queryset = queryset.filter(is_mutual=True)
+        return queryset
+
+
+class InstagramUserFollowingView(_UserFollowBaseListView):
+    """
+    List all accounts that an Instagram user actively follows.
+
+    Supports:
+    - ?is_mutual=true — filter to mutual following only
+    - ?search= — filter by following username or full name
+    - ?ordering= — order by first_seen_at or following__username
+    """
+
+    relationship = "following"
+    search_fields = ["following__username", "following__full_name"]
+    ordering_fields = ["first_seen_at", "following__username"]
+
+    def get_queryset(self):
+        instagram_user = get_object_or_404(InstagramUser, uuid=self.kwargs["uuid"])
+        queryset = (
+            UserFollow.objects.filter(follower=instagram_user, is_active=True)
+            .select_related("following")
+            .annotate(
+                is_mutual=Exists(
+                    UserFollow.objects.filter(
+                        following=instagram_user,
+                        follower=OuterRef("following"),
+                        is_active=True,
+                    ),
+                ),
+            )
+        )
+        is_mutual = self.request.query_params.get("is_mutual")
+        if is_mutual and is_mutual.lower() == "true":
+            queryset = queryset.filter(is_mutual=True)
+        return queryset

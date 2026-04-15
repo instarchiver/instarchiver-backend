@@ -5,6 +5,7 @@ from .post import PostMedia
 from .story import Story
 from .story import UserUpdateStoryLog
 from .user import User
+from .user_follow import UserFollow
 
 __all__ = [
     "Post",
@@ -13,5 +14,6 @@ __all__ = [
     "StoryCredit",
     "StoryCreditPayment",
     "User",
+    "UserFollow",
     "UserUpdateStoryLog",
 ]

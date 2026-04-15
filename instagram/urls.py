@@ -2,6 +2,8 @@ from django.urls import path
 
 from instagram.views import InstagramUserAddStoryCreditAPIView
 from instagram.views import InstagramUserDetailView
+from instagram.views import InstagramUserFollowersView
+from instagram.views import InstagramUserFollowingView
 from instagram.views import InstagramUserHistoryView
 from instagram.views import InstagramUserListCreateView
 from instagram.views import PostAISearchView
@@ -39,4 +41,14 @@ urlpatterns = [
         name="user_history",
     ),
     path("inject-data/", ProcessInstagramDataView.as_view(), name="process_data"),
+    path(
+        "users/<uuid:uuid>/followers/",
+        InstagramUserFollowersView.as_view(),
+        name="user_followers",
+    ),
+    path(
+        "users/<uuid:uuid>/following/",
+        InstagramUserFollowingView.as_view(),
+        name="user_following",
+    ),
 ]

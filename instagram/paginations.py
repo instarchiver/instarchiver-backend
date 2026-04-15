@@ -67,6 +67,19 @@ class PostAISearchCursorPagination(CursorPagination):
     cursor_query_param = "cursor"
 
 
+class UserFollowCursorPagination(CursorPagination):
+    """
+    Cursor pagination for UserFollow list (followers / following).
+    Orders by first_seen_at (descending) to show most recently observed first.
+    """
+
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 100
+    ordering = "-first_seen_at"
+    cursor_query_param = "cursor"
+
+
 class PostSimilarPageNumberPagination(PageNumberPagination):
     """
     Page number pagination for similar posts.
