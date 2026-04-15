@@ -538,7 +538,7 @@ def _determine_file_extension(response: requests.Response, url: str) -> str:
         return "jpg"
 
     # Fallback: try to get from URL
-    return url.rsplit(".", maxsplit=1)[-1].split("?", maxsplit=1)[0] or "jpg"
+    return url.split(".")[-1].split("?")[0] or "jpg"
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
