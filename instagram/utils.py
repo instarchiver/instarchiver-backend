@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 def download_file_from_url(url, timeout=30):
     """Download file from URL and return content with extension."""
+
     try:
         response = requests.get(url, timeout=timeout)
         if response.status_code == status.HTTP_200_OK:

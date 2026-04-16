@@ -41,10 +41,8 @@ class TestGenerateStoryThumbnailInsight(TestCase):
         assert "not found" in result.result["error"].lower()
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_no_thumbnail_file(self, mock_download):
+    def test_no_thumbnail_file(self):
         """Test task returns error when story has no thumbnail file."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="")
         result = generate_story_thumbnail_insight.delay(story.story_id)
         assert isinstance(result, EagerResult)
@@ -52,10 +50,8 @@ class TestGenerateStoryThumbnailInsight(TestCase):
         assert "thumbnail" in result.result["error"].lower()
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_insight_already_exists(self, mock_download):
+    def test_insight_already_exists(self):
         """Test task returns early when insight already exists."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="", thumbnail_insight="")
         # Attach a thumbnail so the task passes the thumbnail check,
         # then set the insight so it hits the "already exists" early return.
@@ -69,10 +65,8 @@ class TestGenerateStoryThumbnailInsight(TestCase):
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     @patch("instagram.models.story.get_openai_client")
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_success(self, mock_download, mock_get_client):
+    def test_success(self, mock_get_client):
         """Test successful thumbnail insight generation."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="", thumbnail_insight="")
         # Attach a real thumbnail file so the model method works
         story.thumbnail = _make_image_file()
@@ -91,10 +85,8 @@ class TestGenerateStoryThumbnailInsight(TestCase):
         assert result.result["success"] is True
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_value_error_returns_failure(self, mock_download):
+    def test_value_error_returns_failure(self):
         """Test that a ValueError from the model method returns a failure result."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="", thumbnail_insight="")
         story.thumbnail = _make_image_file()
         story.save()
@@ -128,10 +120,8 @@ class TestPeriodicGenerateStoryThumbnailInsights(TestCase):
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     @patch("instagram.tasks.generate_story_thumbnail_insight.delay")
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_queues_tasks_for_eligible_stories(self, mock_download, mock_task_delay):
+    def test_queues_tasks_for_eligible_stories(self, mock_task_delay):
         """Test that tasks are queued for stories with thumbnails but no insight."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="", thumbnail_insight="")
         story.thumbnail = _make_image_file()
         story.save()
@@ -147,10 +137,8 @@ class TestPeriodicGenerateStoryThumbnailInsights(TestCase):
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     @patch("instagram.tasks.generate_story_thumbnail_insight.delay")
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_error_handling(self, mock_download, mock_task_delay):
+    def test_error_handling(self, mock_task_delay):
         """Test that individual queuing errors are tracked."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="", thumbnail_insight="")
         story.thumbnail = _make_image_file()
         story.save()
@@ -288,10 +276,8 @@ class TestGenerateStoryThumbnailInsightRetryPaths(TestCase):
     """Tests for retryable/non-retryable exception handling in story thumbnail task."""
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_non_retryable_exception_returns_failure(self, mock_download):
+    def test_non_retryable_exception_returns_failure(self):
         """Test that a non-retryable exception returns a failure result."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="", thumbnail_insight="")
         story.thumbnail = _make_image_file()
         story.save()
@@ -308,10 +294,8 @@ class TestGenerateStoryThumbnailInsightRetryPaths(TestCase):
         assert result.result["attempts"] >= 1
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_retryable_network_exception_exhausts_retries(self, mock_download):
+    def test_retryable_network_exception_exhausts_retries(self):
         """Test that a retryable network exception exhausts retries and fails."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="", thumbnail_insight="")
         story.thumbnail = _make_image_file()
         story.save()
@@ -417,10 +401,8 @@ class TestModerateStoryContent(TestCase):
         assert "not found" in result.result["error"].lower()
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_success(self, mock_download):
+    def test_success(self):
         """Test successful story moderation."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="")
         story.thumbnail = _make_image_file()
         story.save()
@@ -433,10 +415,8 @@ class TestModerateStoryContent(TestCase):
         assert result.result["story_id"] == story.story_id
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_exception_exhausts_retries(self, mock_download):
+    def test_exception_exhausts_retries(self):
         """Test that exceptions trigger retries and the task ultimately fails."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="")
         story.thumbnail = _make_image_file()
         story.save()
@@ -462,10 +442,8 @@ class TestPeriodicModerateStoryContent(TestCase):
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     @patch("instagram.tasks.moderate_story_content.delay")
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_queues_tasks_for_eligible_stories(self, mock_download, mock_task_delay):
+    def test_queues_tasks_for_eligible_stories(self, mock_task_delay):
         """Test that tasks are queued for stories with thumbnails but no moderation."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="")
         story.thumbnail = _make_image_file()
         story.save()
@@ -480,10 +458,8 @@ class TestPeriodicModerateStoryContent(TestCase):
         assert result.result["queued"] >= 1
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_already_moderated_stories_skipped(self, mock_download):
+    def test_already_moderated_stories_skipped(self):
         """Test that stories with moderated_at set are not re-queued."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="")
         story.thumbnail = _make_image_file()
         story.moderated_at = timezone.now()
@@ -495,10 +471,8 @@ class TestPeriodicModerateStoryContent(TestCase):
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     @patch("instagram.tasks.moderate_story_content.delay")
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_error_handling(self, mock_download, mock_task_delay):
+    def test_error_handling(self, mock_task_delay):
         """Test that individual queuing errors are tracked."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="")
         story.thumbnail = _make_image_file()
         story.save()

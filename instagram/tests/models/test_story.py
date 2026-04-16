@@ -215,16 +215,9 @@ class TestStoryModel(TestCase):
             content_type="image/jpeg",
         )
 
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_generate_thumbnail_insight_raises_error_without_thumbnail(
-        self,
-        mock_download,
-    ):
+    def test_generate_thumbnail_insight_raises_error_without_thumbnail(self):
         """Test that generate_thumbnail_insight raises ValueError without thumbnail."""
-        # Mock download to return None so signal doesn't download files
-        mock_download.return_value = (None, None)
-
-        # Create story with thumbnail_url but prevent actual download
+        # Create story with no thumbnail_url so signal doesn't queue download
         story = StoryFactory(thumbnail_url="")
 
         # Manually clear the thumbnail field
@@ -236,17 +229,9 @@ class TestStoryModel(TestCase):
             story.generate_thumbnail_insight()
 
     @patch("instagram.models.story.get_openai_client")
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_generate_thumbnail_insight_success(
-        self,
-        mock_download,
-        mock_get_client,
-    ):
+    def test_generate_thumbnail_insight_success(self, mock_get_client):
         """Test successful thumbnail insight generation."""
-        # Mock download to return None so we can set thumbnail manually
-        mock_download.return_value = (None, None)
-
-        # Create story
+        # Create story with no thumbnail_url so signal doesn't queue download
         story = StoryFactory(thumbnail_url="")
 
         # Manually set the thumbnail
@@ -274,17 +259,9 @@ class TestStoryModel(TestCase):
         mock_client.chat.completions.create.assert_called_once()
 
     @patch("instagram.models.story.get_openai_client")
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_generate_thumbnail_insight_handles_exception(
-        self,
-        mock_download,
-        mock_get_client,
-    ):
+    def test_generate_thumbnail_insight_handles_exception(self, mock_get_client):
         """Test that generate_thumbnail_insight handles exceptions gracefully."""
-        # Mock download to return None so we can set thumbnail manually
-        mock_download.return_value = (None, None)
-
-        # Create story
+        # Create story with no thumbnail_url so signal doesn't queue download
         story = StoryFactory(thumbnail_url="")
 
         # Manually set the thumbnail
@@ -365,10 +342,8 @@ class TestStoryModel(TestCase):
         assert result is None
 
     # Moderate Content Tests
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_moderate_content_raises_error_without_thumbnail(self, mock_download):
+    def test_moderate_content_raises_error_without_thumbnail(self):
         """Test that moderate_content raises ValueError when no thumbnail exists."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="")
         story.thumbnail = None
         story.save()
@@ -377,10 +352,8 @@ class TestStoryModel(TestCase):
             story.moderate_content()
 
     @patch("instagram.models.story.moderate_image_content")
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_moderate_content_success_flagged(self, mock_download, mock_moderate):
+    def test_moderate_content_success_flagged(self, mock_moderate):
         """Test moderate_content saves fields when content is flagged."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="")
         story.thumbnail = self._create_test_image()
         story.save()
@@ -401,10 +374,8 @@ class TestStoryModel(TestCase):
         assert story.moderated_at is not None
 
     @patch("instagram.models.story.moderate_image_content")
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_moderate_content_success_not_flagged(self, mock_download, mock_moderate):
+    def test_moderate_content_success_not_flagged(self, mock_moderate):
         """Test moderate_content saves is_flagged=False when content is clean."""
-        mock_download.return_value = (None, None)
         story = StoryFactory(thumbnail_url="")
         story.thumbnail = self._create_test_image()
         story.save()

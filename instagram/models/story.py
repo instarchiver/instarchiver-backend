@@ -1,5 +1,6 @@
 import base64
 import logging
+import uuid
 from io import BytesIO
 
 from django.db import models
@@ -12,27 +13,29 @@ from core.utils.openai import moderate_image_content
 from instagram.misc import get_user_story_upload_location
 from instagram.models.mixins import InstagramModerationMixin
 
+logger = logging.getLogger(__name__)
+
 
 class Story(InstagramModerationMixin):
     story_id = models.CharField(unique=True, max_length=50, primary_key=True)
     user = models.ForeignKey("instagram.User", on_delete=models.CASCADE)
     thumbnail_url = models.URLField(max_length=2500, blank=True)
-    blur_data_url = models.TextField(blank=True)
     media_url = models.URLField(max_length=2500, blank=True)
+    blur_data_url = models.TextField(blank=True)
 
     thumbnail = models.ImageField(
         upload_to=get_user_story_upload_location,
         blank=True,
         null=True,
     )
-    thumbnail_insight = models.TextField(blank=True)
-    thumbnail_insight_token_usage = models.IntegerField(default=0)
     media = models.FileField(
         upload_to=get_user_story_upload_location,
         blank=True,
         null=True,
     )
-    raw_api_data = models.JSONField(blank=True, null=True)
+
+    thumbnail_insight = models.TextField(blank=True)
+    thumbnail_insight_token_usage = models.IntegerField(default=0)
 
     embedding = VectorField(dimensions=1536, blank=True, null=True)
     embedding_token_usage = models.IntegerField(default=0)
@@ -40,12 +43,68 @@ class Story(InstagramModerationMixin):
     created_at = models.DateTimeField(auto_now_add=True)
     story_created_at = models.DateTimeField()
 
+    raw_api_data = models.JSONField(blank=True, null=True)
+
     class Meta:
         verbose_name = "Story"
         verbose_name_plural = "Stories"
 
     def __str__(self):
         return f"{self.user.username} - {self.story_id}"
+
+    def download_thumbnail(self) -> str | None:
+        """
+        Download thumbnail from thumbnail_url if the thumbnail field is empty.
+
+        Returns:
+            Saved file name if downloaded, None otherwise.
+        """
+        from django.core.files.base import ContentFile  # noqa: PLC0415
+
+        from instagram.utils import download_file_from_url  # noqa: PLC0415
+
+        if not (self.thumbnail_url and not self.thumbnail):
+            return None
+        content, extension = download_file_from_url(self.thumbnail_url)
+        if content and extension:
+            filename = f"{uuid.uuid4()}.{extension}"
+            self.thumbnail.save(filename, ContentFile(content), save=False)
+            logger.info("Downloaded thumbnail for story %s", self.story_id)
+            return self.thumbnail.name
+        return None
+
+    def download_media(self) -> str | None:
+        """
+        Download media from media_url if the media field is empty.
+
+        Returns:
+            Saved file name if downloaded, None otherwise.
+        """
+        from django.core.files.base import ContentFile  # noqa: PLC0415
+
+        from instagram.utils import download_file_from_url  # noqa: PLC0415
+
+        if not (self.media_url and not self.media):
+            return None
+        content, extension = download_file_from_url(self.media_url)
+        if content and extension:
+            filename = f"{uuid.uuid4()}.{extension}"
+            self.media.save(filename, ContentFile(content), save=False)
+            logger.info("Downloaded media for story %s", self.story_id)
+            return self.media.name
+        return None
+
+    def queue_thumbnail_download(self) -> None:
+        """Queue a background task to download the thumbnail file."""
+        from instagram.tasks import download_story_thumbnail_from_url  # noqa: PLC0415
+
+        download_story_thumbnail_from_url.delay(self.story_id)
+
+    def queue_media_download(self) -> None:
+        """Queue a background task to download the media file."""
+        from instagram.tasks import download_story_media_from_url  # noqa: PLC0415
+
+        download_story_media_from_url.delay(self.story_id)
 
     def generate_blur_data_url_task(self):
         """
