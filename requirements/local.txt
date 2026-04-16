@@ -9,7 +9,7 @@ watchfiles==1.1.1  # https://github.com/samuelcolvin/watchfiles
 # ------------------------------------------------------------------------------
 mypy==1.20.1  # https://github.com/python/mypy
 django-stubs[compatible-mypy]==6.0.2  # https://github.com/typeddjango/django-stubs
-pytest==9.0.2  # https://github.com/pytest-dev/pytest
+pytest==9.0.3  # https://github.com/pytest-dev/pytest
 pytest-cov==7.1.0  # https://github.com/pytest-dev/pytest-cov
 pytest-sugar==1.1.1  # https://github.com/Teemu/pytest-sugar
 pytest-xdist==3.8.0  # https://github.com/pytest-dev/pytest-xdist
