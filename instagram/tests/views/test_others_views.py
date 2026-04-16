@@ -1,5 +1,3 @@
-from unittest.mock import patch
-
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
@@ -40,10 +38,8 @@ class ProcessInstagramDataViewTest(TestCase):
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_create_success(self, mock_download):
+    def test_create_success(self):
         """Test successful data injection creates user and story."""
-        mock_download.return_value = (None, None)
         response = self.client.post(self.url, self.valid_payload, format="json")
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data["username"] == "injectuser"
@@ -53,10 +49,8 @@ class ProcessInstagramDataViewTest(TestCase):
         assert User.objects.filter(username="injectuser").exists()
         assert Story.objects.filter(story_id="inject_story_001").exists()
 
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_existing_user_not_duplicated(self, mock_download):
+    def test_existing_user_not_duplicated(self):
         """Test that an existing user is reused without creating a duplicate."""
-        mock_download.return_value = (None, None)
         InstagramUserFactory(username="existinguser")
         payload = dict(
             self.valid_payload,
@@ -68,10 +62,8 @@ class ProcessInstagramDataViewTest(TestCase):
         assert response.data["user_created"] is False
         assert User.objects.filter(username="existinguser").count() == 1
 
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_existing_story_not_duplicated(self, mock_download):
+    def test_existing_story_not_duplicated(self):
         """Test that an existing story_id does not create a duplicate."""
-        mock_download.return_value = (None, None)
         # First injection
         self.client.post(self.url, self.valid_payload, format="json")
         # Second injection with same story_id
@@ -98,10 +90,8 @@ class ProcessInstagramDataViewTest(TestCase):
         response = self.client.post(self.url, payload, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_response_contains_expected_fields(self, mock_download):
+    def test_response_contains_expected_fields(self):
         """Test that the response contains all expected fields."""
-        mock_download.return_value = (None, None)
         response = self.client.post(self.url, self.valid_payload, format="json")
         assert response.status_code == status.HTTP_201_CREATED
         expected_keys = {

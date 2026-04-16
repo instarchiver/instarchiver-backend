@@ -401,14 +401,8 @@ class TestUserUpdateStoriesFromApi(TestCase):
         assert "Unexpected connection error" in log.message
 
     @patch("instagram.models.user.fetch_user_stories_by_username")
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_update_stories_existing_story_not_duplicated(
-        self,
-        mock_download,
-        mock_fetch,
-    ):
+    def test_update_stories_existing_story_not_duplicated(self, mock_fetch):
         """Test that existing stories are not duplicated on re-update."""
-        mock_download.return_value = (None, None)
         user = InstagramUserFactory(username="nodupuser")
         StoryFactory(story_id="existing_story", user=user)
         mock_fetch.return_value = {

@@ -3,6 +3,7 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from instagram.models import PostMedia
+from instagram.models import Story
 from instagram.tests.factories import InstagramUserFactory
 from instagram.tests.factories import PostFactory
 from instagram.tests.factories import PostMediaFactory
@@ -30,46 +31,51 @@ class TestUserSignal(TestCase):
 
 
 class TestStorySignal(TestCase):
-    """Tests for the story post_save signal (download_story_media)."""
+    """Tests for the story post_save signal (queue_story_media_download)."""
 
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_thumbnail_downloaded_when_url_set(self, mock_download):
-        """Test that thumbnail is downloaded when thumbnail_url is set."""
-        mock_download.return_value = (b"image_content", "jpg")
-        story = StoryFactory(thumbnail_url="https://example.com/thumb.jpg")
-        # Signal should have attempted to download the thumbnail
-        mock_download.assert_any_call("https://example.com/thumb.jpg")
-        story.refresh_from_db()
-        # Thumbnail file field should have been saved
-        assert story.thumbnail
+    @patch("instagram.tasks.story.download_story_thumbnail_from_url.delay")
+    def test_thumbnail_task_queued_when_url_set(self, mock_delay):
+        """Test that thumbnail download task is queued when thumbnail_url is set."""
+        with self.captureOnCommitCallbacks(execute=True):
+            story = StoryFactory(
+                thumbnail_url="https://example.com/thumb.jpg",
+                media_url="",
+            )
+        mock_delay.assert_called_once_with(story.story_id)
 
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_media_downloaded_when_url_set(self, mock_download):
-        """Test that media is downloaded when media_url is set."""
-        mock_download.return_value = (b"video_content", "mp4")
-        story = StoryFactory(media_url="https://example.com/vid.mp4")
-        # download should have been called for media
-        mock_download.assert_any_call("https://example.com/vid.mp4")
-        story.refresh_from_db()
-        assert story.media
+    @patch("instagram.tasks.story.download_story_media_from_url.delay")
+    def test_media_task_queued_when_url_set(self, mock_delay):
+        """Test that media download task is queued when media_url is set."""
+        with self.captureOnCommitCallbacks(execute=True):
+            story = StoryFactory(
+                thumbnail_url="",
+                media_url="https://example.com/vid.mp4",
+            )
+        mock_delay.assert_called_once_with(story.story_id)
 
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_no_download_when_urls_empty(self, mock_download):
-        """Test that no download happens when both URLs are empty."""
-        mock_download.return_value = (None, None)
-        StoryFactory(thumbnail_url="", media_url="")
-        mock_download.assert_not_called()
+    @patch("instagram.tasks.story.download_story_thumbnail_from_url.delay")
+    @patch("instagram.tasks.story.download_story_media_from_url.delay")
+    def test_no_tasks_queued_when_urls_empty(self, mock_media_delay, mock_thumb_delay):
+        """Test that no tasks are queued when both URLs are empty."""
+        with self.captureOnCommitCallbacks(execute=True):
+            StoryFactory(thumbnail_url="", media_url="")
+        mock_thumb_delay.assert_not_called()
+        mock_media_delay.assert_not_called()
 
-    @patch("instagram.signals.story.download_file_from_url")
-    def test_no_redownload_when_file_already_set(self, mock_download):
-        """Test that download is skipped when file field is already populated."""
-        mock_download.return_value = (b"content", "jpg")
-        # Create story: first save triggers download
-        story = StoryFactory(thumbnail_url="https://example.com/t.jpg")
-        call_count_after_create = mock_download.call_count
-        # Save again: thumbnail is already set so no additional download
-        story.save()
-        assert mock_download.call_count == call_count_after_create
+    @patch("instagram.tasks.story.download_story_thumbnail_from_url.delay")
+    def test_no_task_queued_when_thumbnail_already_set(self, mock_delay):
+        """Test that no task is queued when the thumbnail file is already populated."""
+        story = StoryFactory(thumbnail_url="", media_url="")
+        mock_delay.reset_mock()
+        # Simulate a previously downloaded thumbnail via queryset update (bypass signal)
+        Story.objects.filter(story_id=story.story_id).update(
+            thumbnail_url="https://example.com/t.jpg",
+            thumbnail="stories/existing_thumb.jpg",
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            story = Story.objects.get(story_id=story.story_id)
+            story.save()
+        mock_delay.assert_not_called()
 
 
 class TestPostSignal(TestCase):
