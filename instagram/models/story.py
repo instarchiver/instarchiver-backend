@@ -139,9 +139,7 @@ class Story(InstagramModerationMixin):
             raise ValueError(msg)
 
         try:
-            embedding, token_usage = generate_image_embedding(
-                "https://cdn.instarchiver.net/users/tumoutousdac/stories/8a25e9a0-954d-41d3-86ce-ef388f970e5a.jpg",
-            )
+            embedding, token_usage = generate_image_embedding(self.thumbnail.url)
 
             self.embedding = embedding
             self.embedding_token_usage = token_usage
