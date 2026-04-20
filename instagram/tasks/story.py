@@ -288,7 +288,7 @@ def generate_story_embedding(self, story_id: str) -> dict:  # noqa: PLR0911
         }
 
     except ValueError as e:
-        # Non-retryable error (e.g., empty thumbnail_insight)
+        # Non-retryable error
         logger.exception("ValueError generating embedding for story %s", story_id)
         return {"success": False, "error": f"ValueError: {e!s}"}
 
@@ -342,7 +342,7 @@ def generate_story_embedding(self, story_id: str) -> dict:  # noqa: PLR0911
 @shared_task
 def periodic_generate_story_embeddings():
     """
-    Automatically generate embeddings for stories that have thumbnail_insight
+    Automatically generate embeddings for stories that have a thumbnail
     but don't have embeddings yet.
     This task is designed to be run periodically via Celery Beat.
 

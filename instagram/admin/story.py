@@ -31,8 +31,6 @@ class StoryAdmin(ModelAdmin):
         "story_created_at",
         "raw_api_data",
         "blur_data_url",
-        "thumbnail_insight",
-        "thumbnail_insight_token_usage",
         "embedding_token_usage",
         "moderation_result",
     ]
@@ -46,7 +44,6 @@ class StoryAdmin(ModelAdmin):
                     "thumbnail",
                     "media",
                     "blur_data_url",
-                    ("thumbnail_insight", "thumbnail_insight_token_usage"),
                     ("embedding", "embedding_token_usage"),
                 ),
                 "classes": ["tab"],
