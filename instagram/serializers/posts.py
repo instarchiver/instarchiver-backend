@@ -39,7 +39,6 @@ class PostListSerializer(serializers.ModelSerializer):
             "width",
             "height",
             "caption",
-            "thumbnail_insight",
             "media_count",
             "is_flagged",
             "post_created_at",
