@@ -31,9 +31,6 @@ class Story(InstagramModerationMixin):
         null=True,
     )
 
-    thumbnail_insight = models.TextField(blank=True)
-    thumbnail_insight_token_usage = models.IntegerField(default=0)
-
     embedding = VectorField(dimensions=1536, blank=True, null=True)
     embedding_token_usage = models.IntegerField(default=0)
 
