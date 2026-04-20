@@ -12,6 +12,7 @@ from core.utils import openai
 from .models import CoreAPISetting
 from .models import FirebaseAdminSetting
 from .models import OpenAISetting
+from .models import OpenRouterSetting
 from .models import StripeSetting
 
 
@@ -101,6 +102,30 @@ class FirebaseAdminSettingAdmin(SingletonModelAdmin, ModelAdmin):
         ),
     )
     readonly_fields = ("service_account_json", "created_at", "updated_at")
+
+
+@admin.register(OpenRouterSetting)
+class OpenRouterSettingAdmin(SingletonModelAdmin, ModelAdmin):
+    fieldsets = (
+        (
+            "OpenRouter Configuration",
+            {
+                "fields": (
+                    "embedding_api_key",
+                    "embedding_base_url",
+                    "image_embedding_model",
+                ),
+                "description": "Configure OpenRouter API settings for image embeddings",
+            },
+        ),
+        (
+            "Timestamps",
+            {
+                "fields": ("created_at", "updated_at"),
+            },
+        ),
+    )
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(StripeSetting)

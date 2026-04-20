@@ -217,6 +217,11 @@ UNFOLD = {
                         "icon": "credit_card",
                         "link": "/admin/settings/stripesetting/",
                     },
+                    {
+                        "title": "OpenRouter Settings",
+                        "icon": "hub",
+                        "link": "/admin/settings/openroutersetting/",
+                    },
                 ],
             },
         ],

@@ -107,6 +107,35 @@ class FirebaseAdminSetting(SingletonModel):
         verbose_name = "Firebase Admin Setting"
 
 
+class OpenRouterSetting(SingletonModel):
+    embedding_api_key = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="OpenRouter API Key for embeddings",
+    )
+    embedding_base_url = models.URLField(
+        max_length=255,
+        default="https://openrouter.ai/api/v1/embeddings",
+        help_text="OpenRouter Embeddings endpoint URL",
+    )
+    image_embedding_model = models.CharField(
+        max_length=100,
+        default="nvidia/llama-nemotron-embed-vl-1b-v2",
+        blank=True,
+        help_text="Model for image embeddings",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return "OpenRouter Settings"
+
+    class Meta:
+        verbose_name = "OpenRouter Setting"
+
+
 class StripeSetting(SingletonModel):
     api_key = models.CharField(
         max_length=255,
