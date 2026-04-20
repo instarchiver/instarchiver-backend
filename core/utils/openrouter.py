@@ -59,6 +59,7 @@ def generate_image_embedding(image_url: str) -> tuple[list[float], int]:
                     },
                 ],
                 "encoding_format": "float",
+                "dimensions": 1536,
             },
             timeout=60,
         )
