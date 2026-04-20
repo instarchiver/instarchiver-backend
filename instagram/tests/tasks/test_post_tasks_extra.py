@@ -19,7 +19,6 @@ from instagram.tasks import moderate_post_content
 from instagram.tasks import periodic_generate_post_blur_data_urls
 from instagram.tasks import periodic_generate_post_embeddings
 from instagram.tasks import periodic_generate_post_media_blur_data_urls
-from instagram.tasks import periodic_generate_post_thumbnail_insights
 from instagram.tasks import periodic_moderate_post_content
 from instagram.tasks.post import _determine_file_extension
 from instagram.tasks.post import _get_file_hash
@@ -51,19 +50,6 @@ class TestPeriodicPostTaskCriticalErrors(TestCase):
             side_effect=Exception("DB crash"),
         ):
             result = periodic_generate_post_media_blur_data_urls.delay()
-
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "Critical error" in result.result["error"]
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    def test_periodic_generate_post_thumbnail_insights_critical_error(self):
-        """Test critical error in periodic_generate_post_thumbnail_insights."""
-        with patch(
-            "instagram.tasks.post.Post.objects.filter",
-            side_effect=Exception("DB unavailable"),
-        ):
-            result = periodic_generate_post_thumbnail_insights.delay()
 
         assert isinstance(result, EagerResult)
         assert result.result["success"] is False
@@ -265,11 +251,9 @@ class TestGeneratePostEmbeddingEdgeCases(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_value_error_returns_failure(self):
         """Test that ValueError from generate_embedding returns failure."""
-        post = PostFactory(
-            thumbnail_insight="Some insight",
-            embedding=None,
-            raw_data=None,
-        )
+        post = PostFactory(embedding=None, raw_data=None)
+        post.thumbnail.name = "thumb.jpg"
+        post.save()
         with patch.object(
             post.__class__,
             "generate_embedding",
@@ -284,11 +268,9 @@ class TestGeneratePostEmbeddingEdgeCases(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_non_retryable_exception_returns_failure(self):
         """Test that a non-retryable generic error returns failure."""
-        post = PostFactory(
-            thumbnail_insight="Some insight",
-            embedding=None,
-            raw_data=None,
-        )
+        post = PostFactory(embedding=None, raw_data=None)
+        post.thumbnail.name = "thumb.jpg"
+        post.save()
         with patch.object(
             post.__class__,
             "generate_embedding",
@@ -303,12 +285,9 @@ class TestGeneratePostEmbeddingEdgeCases(TestCase):
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_retryable_network_exception_exhausts_retries(self):
         """Test that a retryable network error exhausts retries and returns failure."""
-        post = PostFactory(
-            thumbnail_insight="Some insight",
-            embedding=None,
-            raw_data=None,
-        )
-        # "network timeout" contains both "network" and "timeout" — retryable keywords
+        post = PostFactory(embedding=None, raw_data=None)
+        post.thumbnail.name = "thumb.jpg"
+        post.save()
         with patch.object(
             post.__class__,
             "generate_embedding",
@@ -318,7 +297,6 @@ class TestGeneratePostEmbeddingEdgeCases(TestCase):
 
         assert isinstance(result, EagerResult)
         assert result.result["success"] is False
-        # After exhausting retries, attempts should be > 1
         assert result.result["attempts"] >= 1
 
 

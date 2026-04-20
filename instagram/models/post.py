@@ -1,15 +1,12 @@
-import base64
 import logging
-from io import BytesIO
 
 from django.db import models
 from django.utils import timezone
 from pgvector.django import VectorField
-from PIL import Image
 from simple_history.models import HistoricalRecords
 
-from core.utils.openai import get_openai_client
 from core.utils.openai import moderate_image_content
+from core.utils.openrouter import generate_image_embedding
 from instagram.misc import get_post_media_upload_location
 from instagram.models.mixins import InstagramModerationMixin
 from instagram.models.user import User
@@ -40,8 +37,6 @@ class Post(InstagramModerationMixin):
         blank=True,
         null=True,
     )
-    thumbnail_insight = models.TextField(blank=True)
-    thumbnail_insight_token_usage = models.IntegerField(default=0)
     width = models.IntegerField(blank=True, null=True)
     height = models.IntegerField(blank=True, null=True)
     blur_data_url = models.TextField(blank=True)
@@ -70,15 +65,6 @@ class Post(InstagramModerationMixin):
 
         post_generate_blur_data_url.delay(self.id)
 
-    def generate_thumbnail_insight_task(self):
-        """
-        Generates AI-powered thumbnail insight using a Celery task.
-        This method queues the thumbnail insight generation as a background task.
-        """
-        from instagram.tasks import generate_post_thumbnail_insight  # noqa: PLC0415
-
-        generate_post_thumbnail_insight.delay(self.id)
-
     def generate_embedding_task(self):
         """
         Generates embedding vector for the post using a Celery task.
@@ -88,152 +74,33 @@ class Post(InstagramModerationMixin):
 
         generate_post_embedding.delay(self.id)
 
-    def generate_thumbnail_insight(self):
-        """
-        Generate AI-powered insight for the post thumbnail using OpenAI Vision API.
-
-        This method encodes the thumbnail image and sends it to OpenAI's GPT-4 Vision
-        model to generate a descriptive insight about the post content.
-
-        Returns:
-            str: Generated insight text, or empty string if generation fails
-
-        Raises:
-            ValueError: If thumbnail file doesn't exist
-            ImproperlyConfigured: If OpenAI settings are not configured
-        """
-        logger = logging.getLogger(__name__)
-
-        # Check if thumbnail exists
-        if not self.thumbnail:
-            msg = f"Thumbnail file does not exist for post {self.id}"
-            raise ValueError(msg)
-
-        try:
-            # Load and optimize image to reduce token usage
-            # Use .open() instead of .path for S3 compatibility
-            with self.thumbnail.open("rb") as image_file:
-                # Open image with PIL
-                image = Image.open(image_file)
-
-                # Resize to 50% to reduce token usage
-                # Calculate new dimensions (50% of original)
-                new_width = image.width // 2
-                new_height = image.height // 2
-
-                # Resize image
-                resized_image = image.resize(
-                    (new_width, new_height),
-                    Image.Resampling.LANCZOS,
-                )
-
-                # Convert to RGB if necessary (for JPEG compatibility)
-                if resized_image.mode in ("RGBA", "P", "LA"):
-                    resized_image = resized_image.convert("RGB")
-
-                # Compress and encode to base64
-                buffer = BytesIO()
-                resized_image.save(buffer, format="JPEG", quality=60, optimize=True)
-                base64_image = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-            # Get OpenAI client and model
-            client = get_openai_client()
-            model_name = "gpt-5-mini"
-
-            # Create chat completion with vision
-            prompt_text = (
-                "Analyze this image and create detailed description about the image."
-                "The description should be detail as possible for text embedding data."
-            )
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": prompt_text,
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}",
-                                },
-                            },
-                        ],
-                    },
-                ],
-            )
-
-            # Extract and save the insight
-            insight = response.choices[0].message.content.strip()
-            self.thumbnail_insight = insight
-            self.thumbnail_insight_token_usage = response.usage.total_tokens
-            self.save(
-                update_fields=["thumbnail_insight", "thumbnail_insight_token_usage"],
-            )
-
-        except FileNotFoundError:
-            logger.exception("Thumbnail file not found for post %s", self.id)
-            raise
-        except Exception:
-            logger.exception(
-                "Failed to generate thumbnail insight for post %s",
-                self.id,
-            )
-            return ""
-        else:
-            logger.info("Generated thumbnail insight for post %s", self.id)
-
     def generate_embedding(self):
         """
-        Generate embedding vector for the post using OpenAI embeddings API.
-
-        This method combines the post's caption and thumbnail_insight to create
-        a text representation, then generates a 1536-dimensional embedding vector
-        using OpenAI's text-embedding-3-small model.
-
-        Note: Embedding generation requires thumbnail_insight to be available,
-        as it provides AI-generated visual context essential for accurate embeddings.
+        Generate embedding vector for the post using OpenRouter image embeddings API.
 
         Returns:
             list[float]: Generated embedding vector, or None if generation fails
 
         Raises:
-            ValueError: If thumbnail_insight is empty
-            ImproperlyConfigured: If OpenAI settings are not configured
+            ValueError: If thumbnail is not available
+            ImproperlyConfigured: If OpenRouter settings are not configured
         """
         logger = logging.getLogger(__name__)
 
-        # Check if thumbnail_insight is available
-        if not self.thumbnail_insight:
-            msg = f"Thumbnail insight is not available for post {self.id}"
+        if not self.thumbnail:
+            msg = f"Thumbnail file does not exist for post {self.id}"
             raise ValueError(msg)
 
-        # Combine caption and thumbnail_insight for embedding input
-        text_parts = []
-        if self.caption:
-            text_parts.append(self.caption)
-        text_parts.append(self.thumbnail_insight)
-
-        embedding_text = " ".join(text_parts)
-
         try:
-            from core.utils.openai import generate_text_embedding  # noqa: PLC0415
+            embedding, token_usage = generate_image_embedding(self.thumbnail.url)
 
-            # Generate embedding
-            embedding, token_usage = generate_text_embedding(embedding_text)
-
-            # Save to model
             self.embedding = embedding
             self.embedding_token_usage = token_usage
             self.save(update_fields=["embedding", "embedding_token_usage"])
 
             logger.info(
-                "Generated embedding for post %s (text length: %d, dimensions: %d, tokens: %d)",  # noqa: E501
+                "Generated embedding for post %s (dimensions: %d, tokens: %d)",
                 self.id,
-                len(embedding_text),
                 len(embedding),
                 token_usage,
             )

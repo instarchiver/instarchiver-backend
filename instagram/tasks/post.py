@@ -437,10 +437,10 @@ def download_post_thumbnail_from_url(self, post_id):
             height,
         )
 
-        # Queue thumbnail insight generation task
-        generate_post_thumbnail_insight.delay(post_id)
+        # Queue embedding generation task
+        generate_post_embedding.delay(post_id)
         logger.info(
-            "Thumbnail insight generation task queued for post %s",
+            "Embedding generation task queued for post %s",
             post_id,
         )
         return {  # noqa: TRY300
@@ -538,196 +538,7 @@ def _determine_file_extension(response: requests.Response, url: str) -> str:
         return "jpg"
 
     # Fallback: try to get from URL
-    return url.split(".")[-1].split("?")[0] or "jpg"
-
-
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def generate_post_thumbnail_insight(self, post_id: str) -> dict:
-    """
-    Generate AI-powered insight for a post thumbnail using OpenAI Vision API.
-    This is a background task that calls the Post model's
-    generate_thumbnail_insight method.
-
-    Args:
-        post_id (str): ID of the post to generate insight for
-
-    Returns:
-        dict: Operation result with success status and details
-    """
-    try:
-        post = Post.objects.get(id=post_id)
-    except Post.DoesNotExist:
-        logger.exception("Post with ID %s not found", post_id)
-        return {"success": False, "error": "Post not found"}
-
-    # Check if thumbnail exists
-    if not post.thumbnail:
-        logger.warning(
-            "No thumbnail file for post %s, cannot generate insight",
-            post_id,
-        )
-        return {"success": False, "error": "No thumbnail file"}
-
-    # Check if insight already exists
-    if post.thumbnail_insight:
-        logger.info("Thumbnail insight already exists for post %s", post_id)
-        return {"success": True, "message": "Insight already exists"}
-
-    try:
-        # Generate the insight
-        post.generate_thumbnail_insight()
-
-        logger.info(
-            "Successfully generated thumbnail insight for post %s (tokens: %s)",
-            post_id,
-            post.thumbnail_insight_token_usage,
-        )
-
-        return {  # noqa: TRY300
-            "success": True,
-            "message": "Successfully generated thumbnail insight",
-            "post_id": post_id,
-            "token_usage": post.thumbnail_insight_token_usage,
-        }
-
-    except ValueError as e:
-        # Non-retryable error (e.g., thumbnail doesn't exist)
-        logger.exception(
-            "ValueError generating thumbnail insight for post %s",
-            post_id,
-        )
-        return {"success": False, "error": f"ValueError: {e!s}"}
-
-    except Exception as e:
-        error_msg = str(e)
-
-        # Determine if this is a retryable error
-        retryable_keywords = [
-            "network",
-            "timeout",
-            "connection",
-            "502",
-            "503",
-            "504",
-            "temporary",
-            "rate limit",
-            "api error",
-            "openai",
-        ]
-        is_retryable = any(
-            keyword in error_msg.lower() for keyword in retryable_keywords
-        )
-
-        if is_retryable and self.request.retries < self.max_retries:
-            logger.warning(
-                "Retryable error generating thumbnail insight for post %s "
-                "(attempt %s/%s): %s",
-                post_id,
-                self.request.retries + 1,
-                self.max_retries + 1,
-                error_msg,
-            )
-            # Exponential backoff
-            countdown = 60 * (2**self.request.retries)
-            raise self.retry(exc=e, countdown=countdown) from e
-
-        # Non-retryable error or max retries exceeded
-        logger.exception(
-            "Failed to generate thumbnail insight for post %s after %s attempts",
-            post_id,
-            self.request.retries + 1,
-        )
-
-        return {
-            "success": False,
-            "error": error_msg,
-            "post_id": post_id,
-            "attempts": self.request.retries + 1,
-        }
-
-
-@shared_task
-def periodic_generate_post_thumbnail_insights():
-    """
-    Automatically generate thumbnail insights for posts that have thumbnails
-    but don't have insights yet.
-    This task is designed to be run periodically via Celery Beat.
-
-    Returns:
-        dict: Summary of operations performed
-    """
-    try:
-        # Get all posts with thumbnails but no insights
-        posts = Post.objects.filter(
-            thumbnail__isnull=False,
-            thumbnail_insight="",
-        )
-        total_posts = posts.count()
-
-        if total_posts == 0:
-            logger.info("No posts found without thumbnail insights")
-            return {
-                "success": True,
-                "message": "No posts to process",
-                "queued": 0,
-                "errors": 0,
-            }
-
-        logger.info(
-            "Starting thumbnail insight generation for %d posts",
-            total_posts,
-        )
-
-        queued_count = 0
-        error_count = 0
-        errors = []
-        task_ids = []
-
-        for post in posts:
-            try:
-                # Queue the thumbnail insight generation task
-                task_result = generate_post_thumbnail_insight.delay(post.id)
-                task_ids.append(task_result.id)
-                queued_count += 1
-                logger.info(
-                    "Successfully queued thumbnail insight generation for "
-                    "post: %s (task: %s)",
-                    post.id,
-                    task_result.id,
-                )
-            except Exception as e:
-                error_count += 1
-                error_msg = (
-                    f"Failed to queue thumbnail insight generation for "
-                    f"post {post.id}: {e!s}"
-                )
-                errors.append(error_msg)
-                logger.exception(
-                    "Error queuing thumbnail insight generation for post %s",
-                    post.id,
-                )
-
-        logger.info(
-            "Thumbnail insight generation queuing completed: "
-            "%d queued, %d errors out of %d total posts",
-            queued_count,
-            error_count,
-            total_posts,
-        )
-
-        return {  # noqa: TRY300
-            "success": True,
-            "message": "Thumbnail insight generation tasks queued",
-            "total": total_posts,
-            "queued": queued_count,
-            "errors": error_count,
-            "error_details": errors if errors else None,
-            "task_ids": task_ids,
-        }
-
-    except Exception as e:
-        logger.exception("Critical error in periodic_generate_post_thumbnail_insights")
-        return {"success": False, "error": f"Critical error: {e!s}"}
+    return url.rsplit(".", maxsplit=1)[-1].split("?", maxsplit=1)[0] or "jpg"
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
@@ -952,15 +763,14 @@ def generate_post_embedding(self, post_id: str) -> dict:  # noqa: PLR0911
         logger.info("Embedding already exists for post %s", post_id)
         return {"success": True, "message": "Embedding already exists"}
 
-    # Check if post has thumbnail_insight (required for embedding)
-    if not post.thumbnail_insight:
+    if not post.thumbnail:
         logger.warning(
-            "Post %s has no thumbnail_insight, cannot generate embedding",
+            "Post %s has no thumbnail file, cannot generate embedding",
             post_id,
         )
         return {
             "success": False,
-            "error": "No thumbnail_insight available",
+            "error": "No thumbnail file",
         }
 
     try:
@@ -1042,7 +852,7 @@ def generate_post_embedding(self, post_id: str) -> dict:  # noqa: PLR0911
 @shared_task
 def periodic_generate_post_embeddings():
     """
-    Automatically generate embeddings for posts that have thumbnail_insight
+    Automatically generate embeddings for posts that have a thumbnail
     but don't have embeddings yet.
     This task is designed to be run periodically via Celery Beat.
 
@@ -1050,11 +860,10 @@ def periodic_generate_post_embeddings():
         dict: Summary of operations performed
     """
     try:
-        # Get all posts without embeddings that have thumbnail_insight
         posts = Post.objects.filter(
             embedding__isnull=True,
-            thumbnail_insight__isnull=False,
-            thumbnail_insight__gt="",
+            thumbnail__isnull=False,
+            thumbnail__gt="",
         )
         total_posts = posts.count()
 
