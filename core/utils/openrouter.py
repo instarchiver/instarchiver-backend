@@ -45,6 +45,8 @@ def generate_image_embedding(image_url: str) -> tuple[list[float], int]:
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                "HTTP-Referer": "https://instarchiver.net",
+                "X-OpenRouter-Title": "Instarchiver",
             },
             json={
                 "model": model,

@@ -1,6 +1,6 @@
-from instagram.models import Post  # noqa: INP001
+from instagram.models import Story  # noqa: INP001
 
 
 def run():
-    post = Post.objects.get(id="3689148398131099643")
-    post.generate_embedding_task()
+    story = Story.objects.get(story_id="3864373243738778145")
+    story.generate_embedding()
