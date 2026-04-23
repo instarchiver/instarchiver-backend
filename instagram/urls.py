@@ -1,5 +1,6 @@
 from django.urls import path
 
+from instagram.views import InstagramStatisticView
 from instagram.views import InstagramUserAddStoryCreditAPIView
 from instagram.views import InstagramUserDetailView
 from instagram.views import InstagramUserHistoryView
@@ -39,4 +40,5 @@ urlpatterns = [
         name="user_history",
     ),
     path("inject-data/", ProcessInstagramDataView.as_view(), name="process_data"),
+    path("statistic/", InstagramStatisticView.as_view(), name="statistic"),
 ]
