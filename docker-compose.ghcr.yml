@@ -14,9 +14,13 @@ services:
     depends_on:
       - postgres
       - redis
+      - pgbouncer
     env_file:
       - ./.envs/.production/.django
       - ./.envs/.production/.postgres
+    environment:
+      PGBOUNCER_HOST: pgbouncer
+      PGBOUNCER_PORT: "5432"
     command: /start
 
   postgres:
@@ -36,6 +40,17 @@ services:
     ports:
       - 100.73.60.108:64202:6379
 
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.25.1-p0
+    env_file:
+      - ./.envs/.production/.postgres
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      POOL_MODE: transaction
+      DEFAULT_POOL_SIZE: 20
+      MAX_CLIENT_CONN: 200
+    depends_on:
+      - postgres
 
   celeryworker:
     <<: *django
