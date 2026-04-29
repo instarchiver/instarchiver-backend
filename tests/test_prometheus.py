@@ -26,6 +26,10 @@ class PrometheusMetricsEndpointTest(TestCase):
         """Test that the metrics output includes Django HTTP request counters."""
         assert "django_http_requests_total_by_method_total" in self.content
 
+    def test_metrics_endpoint_contains_django_db_metrics(self):
+        """Test that the metrics output includes Django database query counters."""
+        assert "django_db_execute_total" in self.content
+
     def test_metrics_endpoint_contains_django_cache_metrics(self):
         """Test that the metrics output includes Django cache operation counters."""
         assert "django_cache_get_total" in self.content
