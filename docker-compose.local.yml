@@ -14,11 +14,15 @@ services:
       - postgres
       - redis
       - mailpit
+      - pgbouncer
     volumes:
       - .:/app:z
     env_file:
       - ./.envs/.local/.django
       - ./.envs/.local/.postgres
+    environment:
+      PGBOUNCER_HOST: pgbouncer
+      PGBOUNCER_PORT: "5432"
     ports:
       - '8000:8000'
     command: /start
@@ -34,8 +38,25 @@ services:
       - instarchiver_local_postgres_data_backups:/backups
     env_file:
       - ./.envs/.local/.postgres
+    # ports:
+    #   - '54321:5432'
+
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.25.1-p0
+    env_file:
+      - ./.envs/.local/.postgres
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      POOL_MODE: transaction
+      DEFAULT_POOL_SIZE: 20
+      MAX_CLIENT_CONN: 200
+      AUTH_TYPE: scram-sha-256
+      # MIN_POOL_SIZE: 5       # optional
+      # RESERVE_POOL_SIZE: 5   # optional
     ports:
-      - '54321:5432'
+      - "5432:5432"
+    depends_on:
+      - postgres
 
   mailpit:
     image: docker.io/axllent/mailpit:latest
@@ -57,6 +78,7 @@ services:
       - redis
       - postgres
       - mailpit
+      - pgbouncer
     ports: []
     command: /start-celeryworker
 
@@ -68,6 +90,7 @@ services:
       - redis
       - postgres
       - mailpit
+      - pgbouncer
     ports: []
     command: /start-celerybeat
 
@@ -75,6 +98,11 @@ services:
     <<: *django
     image: instarchiver_local_flower
     container_name: instarchiver_local_flower
+    depends_on:
+      - redis
+      - postgres
+      - mailpit
+      - pgbouncer
     ports:
       - '5555:5555'
     command: /start-flower

@@ -70,13 +70,13 @@ jobs:
       #       docs.cache-to=type=gha,scope=cached-docs,mode=max
 
       - name: Check DB Migrations
-        run: docker compose -f docker-compose.local.yml run --rm django python manage.py makemigrations --check
+        run: docker compose -f docker-compose.local.yml --env-file .envs/.local/.postgres run --rm django python manage.py makemigrations --check
 
       - name: Run DB Migrations
-        run: docker compose -f docker-compose.local.yml run --rm django python manage.py migrate
+        run: docker compose -f docker-compose.local.yml --env-file .envs/.local/.postgres run --rm django python manage.py migrate
 
       - name: Run Django Tests
-        run: docker compose -f docker-compose.local.yml run django pytest -n auto --cov --cov-branch --cov-report=xml
+        run: docker compose -f docker-compose.local.yml --env-file .envs/.local/.postgres run django pytest -n auto --cov --cov-branch --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v6
@@ -84,4 +84,4 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Tear down the Stack
-        run: docker compose -f docker-compose.local.yml down
+        run: docker compose -f docker-compose.local.yml --env-file .envs/.local/.postgres down
