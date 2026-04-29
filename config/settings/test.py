@@ -45,21 +45,5 @@ TEMPLATES[0]["OPTIONS"]["debug"] = True  # type: ignore[index]
 # ------------------------------------------------------------------------------
 # https://docs.djangoproject.com/en/dev/ref/settings/#media-url
 MEDIA_URL = "http://media.testserver/"
-
-# DATABASES
-# ------------------------------------------------------------------------------
-# Bypass PgBouncer for tests: the test runner creates/drops test_* databases,
-# which PgBouncer cannot proxy (it is configured for a single database name).
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "HOST": env("POSTGRES_HOST", default="postgres"),
-        "PORT": env.int("POSTGRES_PORT", default=5432),
-        "NAME": env("POSTGRES_DB", default="core"),
-        "USER": env("POSTGRES_USER", default=""),
-        "PASSWORD": env("POSTGRES_PASSWORD", default=""),
-        "ATOMIC_REQUESTS": True,
-    },
-}
 # Your stuff...
 # ------------------------------------------------------------------------------
