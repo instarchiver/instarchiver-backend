@@ -52,4 +52,4 @@ firebase-admin==7.4.0  # https://pypi.org/project/firebase-admin/
 stripe==15.1.0 # https://pypi.org/project/stripe/
 
 # Ollama
-ollama==0.6.1 # https://github.com/ollama/ollama
+ollama==0.6.2 # https://github.com/ollama/ollama
