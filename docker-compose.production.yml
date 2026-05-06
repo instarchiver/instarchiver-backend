@@ -13,7 +13,7 @@ services:
       dockerfile: ./compose/production/django/Dockerfile
 
     image: instarchiver_production_django
-    mem_limit: 500m
+    mem_limit: 1g
     volumes:
       - instarchiver_production_django_media:/app/core/media
     depends_on:
@@ -48,6 +48,7 @@ services:
   celeryworker:
     <<: *django
     image: instarchiver_production_celeryworker
+    mem_limit: 500m
     command: /start-celeryworker
 
   celerybeat:
