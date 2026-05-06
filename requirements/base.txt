@@ -9,7 +9,7 @@ django-celery-beat==2.9.0  # https://github.com/celery/django-celery-beat
 flower==2.0.1  # https://github.com/mher/flower
 uvicorn[standard]==0.46.0  # https://github.com/encode/uvicorn
 uvicorn-worker==0.4.0  # https://github.com/Kludex/uvicorn-worker
-boto3==1.43.2  # https://github.com/boto/boto3
+boto3==1.43.4  # https://github.com/boto/boto3
 Pygments==2.20.0  # https://pygments.org/
 
 # Django
@@ -43,7 +43,7 @@ django-unfold==0.92.0  # https://pypi.org/project/django-unfold/
 django-solo==2.5.1  # https://github.com/lazybird/django-solo
 
 #OpenAI
-openai==2.33.0  # https://pypi.org/project/openai/
+openai==2.34.0  # https://pypi.org/project/openai/
 
 # Firebase Admin
 firebase-admin==7.4.0  # https://pypi.org/project/firebase-admin/
