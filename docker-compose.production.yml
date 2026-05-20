@@ -48,7 +48,6 @@ services:
   celeryworker:
     <<: *django
     image: instarchiver_production_celeryworker
-    mem_limit: 500m
     command: /start-celeryworker
 
   celerybeat:
