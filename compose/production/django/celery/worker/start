@@ -5,7 +5,4 @@ set -o pipefail
 set -o nounset
 
 
-exec celery -A config.celery_app worker \
-    -l INFO \
-    --pool=gevent \
-    --concurrency=50
+exec celery -A config.celery_app worker -l INFO
