@@ -53,3 +53,8 @@ stripe==15.1.0 # https://pypi.org/project/stripe/
 
 # Ollama
 ollama==0.6.2 # https://github.com/ollama/ollama
+
+# OpenTelemetry
+opentelemetry-distro==0.63b1  # https://pypi.org/project/opentelemetry-distro/ (includes opentelemetry-instrument CLI)
+opentelemetry-exporter-otlp-proto-http==1.42.1  # https://pypi.org/project/opentelemetry-exporter-otlp-proto-http/
+opentelemetry-instrumentation-django==0.63b1  # https://pypi.org/project/opentelemetry-instrumentation-django/
