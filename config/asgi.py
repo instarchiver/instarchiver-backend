@@ -12,8 +12,6 @@ import os
 import sys
 from pathlib import Path
 
-from django.core.asgi import get_asgi_application
-
 # This allows easy placement of apps within the interior
 # core directory.
 BASE_DIR = Path(__file__).resolve(strict=True).parent.parent
@@ -21,6 +19,23 @@ sys.path.append(str(BASE_DIR / "core"))
 
 # If DJANGO_SETTINGS_MODULE is unset, default to the local settings
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.local")
+
+# Initialize OpenTelemetry per-worker (runs after Gunicorn fork, safe for multi-worker).
+# Conditional on OTEL_EXPORTER_OTLP_ENDPOINT so local dev without the env var is unaffected.  # noqa: E501
+if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+    from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.instrumentation.django import DjangoInstrumentor
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    _provider = TracerProvider(resource=Resource.create())
+    _provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(_provider)
+    DjangoInstrumentor().instrument()
+
+from django.core.asgi import get_asgi_application  # noqa: E402
 
 # This application object is used by any ASGI server configured to use this file.
 django_application = get_asgi_application()
