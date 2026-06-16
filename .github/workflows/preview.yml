@@ -1,72 +1,96 @@
 name: Preview
 
-on:
-  # Deploy after CI passes on a pull request
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-
-  # Cleanup when PR is closed (merged or abandoned)
-  pull_request:
-    types: [closed]
-
+# Enable Buildkit and let compose use it to speed up image building
 env:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+on:
+  pull_request:
+    branches: ["master"]
+    paths-ignore: ["docs/**"]
+    types: [opened, synchronize, reopened, closed]
+
 jobs:
   # ──────────────────────────────────────────────
-  # Deploy preview after CI succeeds
+  # Run linter (mirrors CI)
   # ──────────────────────────────────────────────
-  deploy:
-    if: |
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'pull_request'
+  linter:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - name: Run pre-commit
+        uses: pre-commit/action@v3.0.1
+
+  # ──────────────────────────────────────────────
+  # Run tests (mirrors CI — no Codecov upload)
+  # ──────────────────────────────────────────────
+  pytest:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and cache local backend
+        uses: docker/bake-action@v7
+        with:
+          push: false
+          load: true
+          files: docker-compose.local.yml
+          targets: django
+          set: |
+            django.cache-from=type=gha,scope=django-cached-tests
+            django.cache-to=type=gha,scope=django-cached-tests,mode=max
+
+      - name: Check DB Migrations
+        run: docker compose -f docker-compose.local.yml run --rm django python manage.py makemigrations --check
+
+      - name: Run DB Migrations
+        run: docker compose -f docker-compose.local.yml run --rm django python manage.py migrate
+
+      - name: Run Django Tests
+        run: docker compose -f docker-compose.local.yml run django pytest -n auto --cov --cov-branch --cov-report=xml
+
+      - name: Tear down the Stack
+        run: docker compose -f docker-compose.local.yml down
+
+  # ──────────────────────────────────────────────
+  # Build production images and push to GHCR
+  # ──────────────────────────────────────────────
+  build-and-push:
+    needs: [linter, pytest]
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      pull-requests: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: django
+            dockerfile: ./compose/production/django/Dockerfile
+          - name: postgres
+            dockerfile: ./compose/production/postgres/Dockerfile
 
     steps:
-      - name: Resolve PR number and branch slug
-        id: pr
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          BRANCH_NAME="${{ github.event.workflow_run.head_branch }}"
-
-          # pull_requests array is populated for non-fork PRs
-          PR_NUMBER="${{ github.event.workflow_run.pull_requests[0].number }}"
-
-          # Fallback: query the GitHub API
-          if [ -z "$PR_NUMBER" ]; then
-            PR_NUMBER=$(gh api "repos/${{ github.repository }}/pulls" \
-              --jq ".[] | select(.head.ref == \"$BRANCH_NAME\" and .state == \"open\") | .number" \
-              | head -1)
-          fi
-
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No open PR found for branch '$BRANCH_NAME' — skipping preview deploy"
-            exit 1
-          fi
-
-          # DNS label: lowercase, only [a-z0-9-], max 50 chars
-          BRANCH_SLUG=$(echo "$BRANCH_NAME" \
-            | tr '[:upper:]' '[:lower:]' \
-            | sed 's/[^a-z0-9-]/-/g' \
-            | sed 's/--*/-/g' \
-            | sed 's/^-//; s/-$//' \
-            | cut -c1-50)
-
-          echo "number=$PR_NUMBER"        >> "$GITHUB_OUTPUT"
-          echo "branch_slug=$BRANCH_SLUG" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout PR commit
+      - name: Checkout Code Repository
         uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -78,25 +102,40 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push django image
+      - name: Build and push ${{ matrix.name }}
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./compose/production/django/Dockerfile
+          file: ${{ matrix.dockerfile }}
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/django:pr-${{ steps.pr.outputs.number }}
-          cache-from: type=gha,scope=django-cached-preview
-          cache-to: type=gha,scope=django-cached-preview,mode=max
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.name }}:pr-${{ github.event.pull_request.number }}
+          cache-from: type=gha,scope=${{ matrix.name }}-cached-preview
+          cache-to: type=gha,scope=${{ matrix.name }}-cached-preview,mode=max
 
-      - name: Build and push postgres image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./compose/production/postgres/Dockerfile
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/postgres:pr-${{ steps.pr.outputs.number }}
-          cache-from: type=gha,scope=postgres-cached-preview
-          cache-to: type=gha,scope=postgres-cached-preview,mode=max
+  # ──────────────────────────────────────────────
+  # Deploy preview to VPS
+  # ──────────────────────────────────────────────
+  deploy:
+    needs: [build-and-push]
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v6
+
+      - name: Compute branch slug
+        id: slug
+        run: |
+          BRANCH_SLUG=$(echo "${{ github.head_ref }}" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's/[^a-z0-9-]/-/g' \
+            | sed 's/--*/-/g' \
+            | sed 's/^-//; s/-$//' \
+            | cut -c1-50)
+          echo "branch_slug=$BRANCH_SLUG" >> "$GITHUB_OUTPUT"
 
       - name: Create deploy directory and write .env on VPS
         uses: appleboy/ssh-action@master
@@ -107,19 +146,19 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
-            mkdir -p "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ steps.pr.outputs.number }}"
+            mkdir -p "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}"
 
-            cat > "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ steps.pr.outputs.number }}/.env" <<'EOF'
+            cat > "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}/.env" <<'EOF'
             # Routing — used in docker-compose.preview.yml label interpolation
-            PR_NUMBER=${{ steps.pr.outputs.number }}
-            BRANCH_SLUG=${{ steps.pr.outputs.branch_slug }}
+            PR_NUMBER=${{ github.event.pull_request.number }}
+            BRANCH_SLUG=${{ steps.slug.outputs.branch_slug }}
             IMAGE_REPO=${{ github.repository }}
 
             # Django
             USE_DOCKER=yes
             DJANGO_SETTINGS_MODULE=config.settings.preview
             DJANGO_SECRET_KEY=${{ secrets.PREVIEW_DJANGO_SECRET_KEY }}
-            DJANGO_ALLOWED_HOSTS=${{ steps.pr.outputs.branch_slug }}.testing.instarchiver.net
+            DJANGO_ALLOWED_HOSTS=${{ steps.slug.outputs.branch_slug }}.testing.instarchiver.net
             DJANGO_ADMIN_URL=${{ secrets.PREVIEW_DJANGO_ADMIN_URL }}
             REDIS_URL=redis://redis:6379/0
 
@@ -138,7 +177,7 @@ jobs:
           username: ${{ secrets.PREVIEW_SSH_USERNAME }}
           key: ${{ secrets.PREVIEW_SSH_PRIVATE_KEY }}
           source: "docker-compose.preview.yml"
-          target: "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ steps.pr.outputs.number }}"
+          target: "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}"
           overwrite: true
 
       - name: Start containers and run migrations
@@ -151,29 +190,29 @@ jobs:
           script: |
             set -euo pipefail
 
-            COMPOSE_FILE="${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ steps.pr.outputs.number }}/docker-compose.preview.yml"
+            COMPOSE_FILE="${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}/docker-compose.preview.yml"
 
-            docker compose -p "preview-pr${{ steps.pr.outputs.number }}" -f "$COMPOSE_FILE" \
+            docker compose -p "preview-pr${{ github.event.pull_request.number }}" -f "$COMPOSE_FILE" \
               up -d --pull always --remove-orphans
 
-            docker compose -p "preview-pr${{ steps.pr.outputs.number }}" -f "$COMPOSE_FILE" \
+            docker compose -p "preview-pr${{ github.event.pull_request.number }}" -f "$COMPOSE_FILE" \
               exec -T django python manage.py migrate --noinput
 
       - name: Comment preview URL on PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr comment "${{ steps.pr.outputs.number }}" \
+          gh pr comment "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \
-            --body "**Preview deployed** → https://${{ steps.pr.outputs.branch_slug }}.testing.instarchiver.net
+            --body "**Preview deployed** → https://${{ steps.slug.outputs.branch_slug }}.testing.instarchiver.net
 
-          Built from \`${{ github.event.workflow_run.head_sha }}\`"
+          Built from \`${{ github.event.pull_request.head.sha }}\`"
 
   # ──────────────────────────────────────────────
   # Tear down preview when PR is closed
   # ──────────────────────────────────────────────
   cleanup:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    if: github.event.action == 'closed'
     runs-on: ubuntu-latest
     permissions:
       packages: write
