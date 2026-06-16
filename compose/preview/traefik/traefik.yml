@@ -1,0 +1,32 @@
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+
+providers:
+  docker:
+    # Only route containers that opt in via traefik.enable=true label
+    exposedByDefault: false
+    # When a container is on multiple networks, route via this one
+    network: traefik
+
+certificatesResolvers:
+  cloudflare:
+    acme:
+      storage: /etc/traefik/acme/acme.json
+      dnsChallenge:
+        provider: cloudflare
+        # Use Cloudflare's own resolvers to avoid propagation delays
+        resolvers:
+          - "1.1.1.1:53"
+          - "1.0.0.1:53"
+
+api:
+  # Dashboard available at http://<vps-ip>:8080 — bind to localhost only if needed
+  dashboard: false

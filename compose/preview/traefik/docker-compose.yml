@@ -1,0 +1,33 @@
+# One-time setup on the VPS.
+# Run once: docker compose up -d
+# Requires: CF_DNS_API_TOKEN env var (Cloudflare API token with Zone:DNS:Edit)
+#
+# Prerequisites on the VPS:
+#   1. Add wildcard DNS A record in Cloudflare:
+#      *.testing.instarchiver.net → <VPS public IP>
+#   2. Create deploy directory:
+#      mkdir -p /opt/instarchiver/previews
+#   3. Copy this file to the VPS and run docker compose up -d
+
+services:
+  traefik:
+    image: docker.io/traefik:v3.3
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - traefik
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - acme:/etc/traefik/acme
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+
+networks:
+  traefik:
+    name: traefik
+
+volumes:
+  acme:
