@@ -1,0 +1,87 @@
+volumes:
+  postgres_data: {}
+  redis_data: {}
+
+services:
+  django: &django
+    image: ghcr.io/${IMAGE_REPO}/django:pr-${PR_NUMBER}
+    networks:
+      - preview-internal
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      # HTTPS router
+      - "traefik.http.routers.preview-pr${PR_NUMBER}.rule=Host(`pr-${PR_NUMBER}.preview.instarchiver.net`)"
+      - "traefik.http.routers.preview-pr${PR_NUMBER}.entrypoints=websecure"
+      - "traefik.http.routers.preview-pr${PR_NUMBER}.tls.certresolver=cloudflare"
+      - "traefik.http.services.preview-pr${PR_NUMBER}.loadbalancer.server.port=8000"
+      # HTTP router (Traefik config redirects web → websecure by default; HTTP will 301 to HTTPS)
+      - "traefik.http.routers.preview-pr${PR_NUMBER}-http.rule=Host(`pr-${PR_NUMBER}.preview.instarchiver.net`)"
+      - "traefik.http.routers.preview-pr${PR_NUMBER}-http.entrypoints=web"
+    env_file:
+      - ${SHARED_ENV_DIR}/.django
+      - ${SHARED_ENV_DIR}/.postgres
+      - .env
+    command: /start
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      mailpit:
+        condition: service_started
+
+  postgres:
+    image: ghcr.io/${IMAGE_REPO}/postgres:pr-${PR_NUMBER}
+    networks:
+      - preview-internal
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - ${SHARED_ENV_DIR}/.postgres
+      - .env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: docker.io/redis:6
+    networks:
+      - preview-internal
+    volumes:
+      - redis_data:/data
+
+  mailpit:
+    image: docker.io/axllent/mailpit:latest
+    networks:
+      - preview-internal
+
+  celeryworker:
+    <<: *django
+    networks:
+      - preview-internal
+    labels: {}
+    command: /start-celeryworker
+    depends_on:
+      - redis
+      - postgres
+      - mailpit
+
+  celerybeat:
+    <<: *django
+    networks:
+      - preview-internal
+    labels: {}
+    command: /start-celerybeat
+    depends_on:
+      - redis
+      - postgres
+      - mailpit
+
+networks:
+  preview-internal:
+  traefik:
+    external: true
