@@ -149,17 +149,13 @@ jobs:
             mkdir -p "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}"
 
             cat > "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}/.env" <<'EOF'
-            # Path to shared base env files on this VPS
+            # Path to shared base env files on this VPS (used in docker-compose env_file interpolation)
             SHARED_ENV_DIR=${{ secrets.PREVIEW_SHARED_ENV_DIR }}
 
             # Routing — used in docker-compose.preview.yml label interpolation
             PR_NUMBER=${{ github.event.pull_request.number }}
             BRANCH_SLUG=${{ steps.slug.outputs.branch_slug }}
             IMAGE_REPO=${{ github.repository }}
-
-            # Django overrides (base values come from SHARED_ENV_DIR/.django)
-            DJANGO_SETTINGS_MODULE=config.settings.preview
-            DJANGO_ALLOWED_HOSTS=${{ steps.slug.outputs.branch_slug }}.preview.instarchiver.net
             EOF
 
       - name: Copy docker-compose.preview.yml to VPS
