@@ -13,6 +13,7 @@ services:
       - "traefik.http.services.preview-pr${PR_NUMBER}.loadbalancer.server.port=5000"
     env_file:
       - ${SHARED_ENV_DIR}/.django
+      - ${SHARED_ENV_DIR}/.postgres
       - .env
     command: /start
     depends_on:
