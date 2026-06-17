@@ -142,32 +142,24 @@ jobs:
         with:
           host: ${{ secrets.PREVIEW_SSH_HOST }}
           username: ${{ secrets.PREVIEW_SSH_USERNAME }}
-          key: ${{ secrets.PREVIEW_SSH_PRIVATE_KEY }}
+          password: ${{ secrets.PREVIEW_SSH_PASSWORD }}
           script_stop: true
           script: |
             set -euo pipefail
             mkdir -p "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}"
 
             cat > "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}/.env" <<'EOF'
+            # Path to shared base env files on this VPS
+            SHARED_ENV_DIR=${{ secrets.PREVIEW_SHARED_ENV_DIR }}
+
             # Routing — used in docker-compose.preview.yml label interpolation
             PR_NUMBER=${{ github.event.pull_request.number }}
             BRANCH_SLUG=${{ steps.slug.outputs.branch_slug }}
             IMAGE_REPO=${{ github.repository }}
 
-            # Django
-            USE_DOCKER=yes
+            # Django overrides (base values come from SHARED_ENV_DIR/.django)
             DJANGO_SETTINGS_MODULE=config.settings.preview
-            DJANGO_SECRET_KEY=${{ secrets.PREVIEW_DJANGO_SECRET_KEY }}
-            DJANGO_ALLOWED_HOSTS=${{ steps.slug.outputs.branch_slug }}.testing.instarchiver.net
-            DJANGO_ADMIN_URL=${{ secrets.PREVIEW_DJANGO_ADMIN_URL }}
-            REDIS_URL=redis://redis:6379/0
-
-            # PostgreSQL
-            POSTGRES_HOST=postgres
-            POSTGRES_PORT=5432
-            POSTGRES_DB=instarchiver
-            POSTGRES_USER=instarchiver
-            POSTGRES_PASSWORD=${{ secrets.PREVIEW_POSTGRES_PASSWORD }}
+            DJANGO_ALLOWED_HOSTS=${{ steps.slug.outputs.branch_slug }}.preview.instarchiver.net
             EOF
 
       - name: Copy docker-compose.preview.yml to VPS
@@ -175,7 +167,7 @@ jobs:
         with:
           host: ${{ secrets.PREVIEW_SSH_HOST }}
           username: ${{ secrets.PREVIEW_SSH_USERNAME }}
-          key: ${{ secrets.PREVIEW_SSH_PRIVATE_KEY }}
+          password: ${{ secrets.PREVIEW_SSH_PASSWORD }}
           source: "docker-compose.preview.yml"
           target: "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}"
           overwrite: true
@@ -185,7 +177,7 @@ jobs:
         with:
           host: ${{ secrets.PREVIEW_SSH_HOST }}
           username: ${{ secrets.PREVIEW_SSH_USERNAME }}
-          key: ${{ secrets.PREVIEW_SSH_PRIVATE_KEY }}
+          password: ${{ secrets.PREVIEW_SSH_PASSWORD }}
           script_stop: true
           script: |
             set -euo pipefail
@@ -204,7 +196,7 @@ jobs:
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \
-            --body "**Preview deployed** → https://${{ steps.slug.outputs.branch_slug }}.testing.instarchiver.net
+            --body "**Preview deployed** → https://${{ steps.slug.outputs.branch_slug }}.preview.instarchiver.net
 
           Built from \`${{ github.event.pull_request.head.sha }}\`"
 
@@ -235,7 +227,7 @@ jobs:
         with:
           host: ${{ secrets.PREVIEW_SSH_HOST }}
           username: ${{ secrets.PREVIEW_SSH_USERNAME }}
-          key: ${{ secrets.PREVIEW_SSH_PRIVATE_KEY }}
+          password: ${{ secrets.PREVIEW_SSH_PASSWORD }}
           script: |
             set -euo pipefail
 
@@ -276,4 +268,4 @@ jobs:
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \
-            --body "Preview \`${{ steps.slug.outputs.branch_slug }}.testing.instarchiver.net\` removed."
+            --body "Preview \`${{ steps.slug.outputs.branch_slug }}.preview.instarchiver.net\` removed."

@@ -7,11 +7,13 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik"
-      - "traefik.http.routers.preview-pr${PR_NUMBER}.rule=Host(`${BRANCH_SLUG}.testing.instarchiver.net`)"
+      - "traefik.http.routers.preview-pr${PR_NUMBER}.rule=Host(`${BRANCH_SLUG}.preview.instarchiver.net`)"
       - "traefik.http.routers.preview-pr${PR_NUMBER}.entrypoints=websecure"
       - "traefik.http.routers.preview-pr${PR_NUMBER}.tls.certresolver=cloudflare"
       - "traefik.http.services.preview-pr${PR_NUMBER}.loadbalancer.server.port=5000"
-    env_file: .env
+    env_file:
+      - ${SHARED_ENV_DIR}/.django
+      - .env
     command: /start
     depends_on:
       postgres:
@@ -25,7 +27,9 @@ services:
       - preview-internal
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    env_file: .env
+    env_file:
+      - ${SHARED_ENV_DIR}/.postgres
+      - .env
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
