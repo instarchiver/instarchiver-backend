@@ -4,7 +4,7 @@
 #
 # Prerequisites on the VPS:
 #   1. Add wildcard DNS A record in Cloudflare:
-#      *.testing.instarchiver.net → <VPS public IP>
+#      *.preview.instarchiver.net → <VPS public IP>
 #   2. Create deploy directory:
 #      mkdir -p /opt/instarchiver/previews
 #   3. Copy this file to the VPS and run docker compose up -d
