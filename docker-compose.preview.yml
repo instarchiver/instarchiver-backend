@@ -1,5 +1,9 @@
+volumes:
+  postgres_data: {}
+  redis_data: {}
+
 services:
-  django:
+  django: &django
     image: ghcr.io/${IMAGE_REPO}/django:pr-${PR_NUMBER}
     networks:
       - preview-internal
@@ -10,7 +14,7 @@ services:
       - "traefik.http.routers.preview-pr${PR_NUMBER}.rule=Host(`${BRANCH_SLUG}.preview.instarchiver.net`)"
       - "traefik.http.routers.preview-pr${PR_NUMBER}.entrypoints=websecure"
       - "traefik.http.routers.preview-pr${PR_NUMBER}.tls.certresolver=cloudflare"
-      - "traefik.http.services.preview-pr${PR_NUMBER}.loadbalancer.server.port=5000"
+      - "traefik.http.services.preview-pr${PR_NUMBER}.loadbalancer.server.port=8000"
     env_file:
       - ${SHARED_ENV_DIR}/.django
       - ${SHARED_ENV_DIR}/.postgres
@@ -20,6 +24,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_started
+      mailpit:
         condition: service_started
 
   postgres:
@@ -41,11 +47,37 @@ services:
     image: docker.io/redis:6
     networks:
       - preview-internal
+    volumes:
+      - redis_data:/data
+
+  mailpit:
+    image: docker.io/axllent/mailpit:latest
+    networks:
+      - preview-internal
+
+  celeryworker:
+    <<: *django
+    networks:
+      - preview-internal
+    labels: {}
+    command: /start-celeryworker
+    depends_on:
+      - redis
+      - postgres
+      - mailpit
+
+  celerybeat:
+    <<: *django
+    networks:
+      - preview-internal
+    labels: {}
+    command: /start-celerybeat
+    depends_on:
+      - redis
+      - postgres
+      - mailpit
 
 networks:
   preview-internal:
   traefik:
     external: true
-
-volumes:
-  postgres_data:
