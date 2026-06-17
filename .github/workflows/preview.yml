@@ -183,9 +183,6 @@ jobs:
             docker compose -p "preview-pr${{ github.event.pull_request.number }}" -f "$COMPOSE_FILE" \
               up -d --pull always --remove-orphans
 
-            docker compose -p "preview-pr${{ github.event.pull_request.number }}" -f "$COMPOSE_FILE" \
-              exec -T django python manage.py migrate --noinput
-
       - name: Comment preview URL on PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
