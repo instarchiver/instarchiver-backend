@@ -126,17 +126,6 @@ jobs:
       - name: Checkout Code Repository
         uses: actions/checkout@v6
 
-      - name: Compute branch slug
-        id: slug
-        run: |
-          BRANCH_SLUG=$(echo "${{ github.head_ref }}" \
-            | tr '[:upper:]' '[:lower:]' \
-            | sed 's/[^a-z0-9-]/-/g' \
-            | sed 's/--*/-/g' \
-            | sed 's/^-//; s/-$//' \
-            | cut -c1-50)
-          echo "branch_slug=$BRANCH_SLUG" >> "$GITHUB_OUTPUT"
-
       - name: Create deploy directory and write .env on VPS
         uses: appleboy/ssh-action@master
         with:
@@ -154,7 +143,6 @@ jobs:
 
             # Routing — used in docker-compose.preview.yml label interpolation
             PR_NUMBER=${{ github.event.pull_request.number }}
-            BRANCH_SLUG=${{ steps.slug.outputs.branch_slug }}
             IMAGE_REPO=${{ github.repository }}
             EOF
 
@@ -189,7 +177,7 @@ jobs:
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \
-            --body "**Preview deployed** → https://${{ steps.slug.outputs.branch_slug }}.preview.instarchiver.net
+            --body "**Preview deployed** → https://pr-${{ github.event.pull_request.number }}.preview.instarchiver.net
 
           Built from \`${{ github.event.pull_request.head.sha }}\`"
 
@@ -204,17 +192,6 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Compute branch slug
-        id: slug
-        run: |
-          BRANCH_SLUG=$(echo "${{ github.head_ref }}" \
-            | tr '[:upper:]' '[:lower:]' \
-            | sed 's/[^a-z0-9-]/-/g' \
-            | sed 's/--*/-/g' \
-            | sed 's/^-//; s/-$//' \
-            | cut -c1-50)
-          echo "branch_slug=$BRANCH_SLUG" >> "$GITHUB_OUTPUT"
-
       - name: Tear down containers and volumes
         uses: appleboy/ssh-action@master
         with:
@@ -261,4 +238,4 @@ jobs:
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \
-            --body "Preview \`${{ steps.slug.outputs.branch_slug }}.preview.instarchiver.net\` removed."
+            --body "Preview \`pr-${{ github.event.pull_request.number }}.preview.instarchiver.net\` removed."
