@@ -16,12 +16,9 @@ services:
       - "traefik.http.routers.preview-pr${PR_NUMBER}.entrypoints=websecure"
       - "traefik.http.routers.preview-pr${PR_NUMBER}.tls.certresolver=cloudflare"
       - "traefik.http.services.preview-pr${PR_NUMBER}.loadbalancer.server.port=8000"
-      # HTTP → HTTPS redirect (per-preview, self-contained)
+      # HTTP router (direct — no redirect, both HTTP and HTTPS work independently)
       - "traefik.http.routers.preview-pr${PR_NUMBER}-http.rule=Host(`pr-${PR_NUMBER}.preview.instarchiver.net`)"
       - "traefik.http.routers.preview-pr${PR_NUMBER}-http.entrypoints=web"
-      - "traefik.http.routers.preview-pr${PR_NUMBER}-http.middlewares=preview-pr${PR_NUMBER}-redirect"
-      - "traefik.http.middlewares.preview-pr${PR_NUMBER}-redirect.redirectscheme.scheme=https"
-      - "traefik.http.middlewares.preview-pr${PR_NUMBER}-redirect.redirectscheme.permanent=true"
     env_file:
       - ${SHARED_ENV_DIR}/.django
       - ${SHARED_ENV_DIR}/.postgres
