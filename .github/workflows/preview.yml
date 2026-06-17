@@ -157,7 +157,7 @@ jobs:
           target: "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}"
           overwrite: true
 
-      - name: Start containers and run migrations
+      - name: Start containers, run migrations, and seed demo user
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.PREVIEW_SSH_HOST }}
@@ -168,9 +168,16 @@ jobs:
             set -euo pipefail
 
             COMPOSE_FILE="${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}/docker-compose.preview.yml"
+            COMPOSE_PROJECT="preview-pr${{ github.event.pull_request.number }}"
 
-            docker compose -p "preview-pr${{ github.event.pull_request.number }}" -f "$COMPOSE_FILE" \
+            docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" \
               up -d --pull always --remove-orphans
+
+            docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" \
+              run --rm django python manage.py migrate
+
+            docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" \
+              run --rm django python manage.py runscript create_demo_superuser
 
       - name: Comment preview URL on PR
         env:
