@@ -157,7 +157,7 @@ jobs:
           target: "${{ secrets.PREVIEW_DEPLOY_PATH }}/pr-${{ github.event.pull_request.number }}"
           overwrite: true
 
-      - name: Start containers, run migrations, and seed demo user
+      - name: Start containers and seed demo user
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.PREVIEW_SSH_HOST }}
@@ -171,10 +171,7 @@ jobs:
             COMPOSE_PROJECT="preview-pr${{ github.event.pull_request.number }}"
 
             docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" \
-              up -d --pull always --remove-orphans
-
-            docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" \
-              run --rm django python manage.py migrate
+              up -d --pull always --remove-orphans --wait
 
             docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" \
               run --rm django python manage.py runscript create_demo_superuser
