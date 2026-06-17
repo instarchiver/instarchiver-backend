@@ -16,7 +16,7 @@ services:
       - "traefik.http.routers.preview-pr${PR_NUMBER}.entrypoints=websecure"
       - "traefik.http.routers.preview-pr${PR_NUMBER}.tls.certresolver=cloudflare"
       - "traefik.http.services.preview-pr${PR_NUMBER}.loadbalancer.server.port=8000"
-      # HTTP router (direct — no redirect, both HTTP and HTTPS work independently)
+      # HTTP router (Traefik config redirects web → websecure by default; HTTP will 301 to HTTPS)
       - "traefik.http.routers.preview-pr${PR_NUMBER}-http.rule=Host(`pr-${PR_NUMBER}.preview.instarchiver.net`)"
       - "traefik.http.routers.preview-pr${PR_NUMBER}-http.entrypoints=web"
     env_file:
