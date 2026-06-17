@@ -28,7 +28,7 @@ django-health-check==4.4.1  # https://pypi.org/project/django-health-check/
 django-filter==25.2  # https://github.com/carltongibson/django-filter
 django-extensions==4.1  # https://github.com/django-extensions/django-extensions
 pgvector==0.4.2  # https://github.com/pgvector/pgvector
-django-prometheus==2.4.1  # https://github.com/django-commons/django-prometheus
+django-prometheus==2.5.0  # https://github.com/django-commons/django-prometheus
 # Django REST Framework
 djangorestframework==3.17.1  # https://github.com/encode/django-rest-framework
 django-cors-headers==4.9.0  # https://github.com/adamchainz/django-cors-headers
