@@ -26,6 +26,7 @@ CACHES = {
 }
 
 CORS_ALLOW_ALL_ORIGINS = True
+CSRF_TRUSTED_ORIGINS = ["https://*.preview.instarchiver.net"]
 
 
 # EMAIL
