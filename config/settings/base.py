@@ -376,7 +376,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 # By Default swagger ui is available only to admin user(s). You can change permission classes to change that
 # See more configuration options at https://drf-spectacular.readthedocs.io/en/latest/settings.html#settings
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Instarchiver API",
+    "TITLE": "Instarchiver API Demo Preview Auto Deploy",
     "DESCRIPTION": "Documentation of API endpoints of Instarchiver",
     "VERSION": "1.0.0",
     # "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAdminUser"],
