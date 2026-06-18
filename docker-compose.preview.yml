@@ -1,10 +1,11 @@
 volumes:
   postgres_data: {}
-  redis_data: {}
 
 services:
-  django: &django
+  django:
     image: ghcr.io/${IMAGE_REPO}/django:pr-${PR_NUMBER}
+    mem_limit: 512m
+    cpus: 0.75
     networks:
       - preview-internal
       - traefik
@@ -23,17 +24,19 @@ services:
       - ${SHARED_ENV_DIR}/.django
       - ${SHARED_ENV_DIR}/.postgres
       - .env
+    environment:
+      CELERY_TASK_ALWAYS_EAGER: "True"
     command: /start
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_started
       mailpit:
         condition: service_started
 
   postgres:
     image: ghcr.io/${IMAGE_REPO}/postgres:pr-${PR_NUMBER}
+    mem_limit: 256m
+    cpus: 0.25
     networks:
       - preview-internal
     volumes:
@@ -47,39 +50,12 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: docker.io/redis:6
-    networks:
-      - preview-internal
-    volumes:
-      - redis_data:/data
-
   mailpit:
     image: docker.io/axllent/mailpit:latest
+    mem_limit: 64m
+    cpus: 0.1
     networks:
       - preview-internal
-
-  celeryworker:
-    <<: *django
-    networks:
-      - preview-internal
-    labels: {}
-    command: /start-celeryworker
-    depends_on:
-      - redis
-      - postgres
-      - mailpit
-
-  celerybeat:
-    <<: *django
-    networks:
-      - preview-internal
-    labels: {}
-    command: /start-celerybeat
-    depends_on:
-      - redis
-      - postgres
-      - mailpit
 
 networks:
   preview-internal:
