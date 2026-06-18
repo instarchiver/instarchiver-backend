@@ -74,5 +74,7 @@ if env("USE_DOCKER") == "yes":
 
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#task-eager-propagates
 CELERY_TASK_EAGER_PROPAGATES = True
+# https://docs.celeryq.dev/en/stable/userguide/configuration.html#task-always-eager
+CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", default=False)
 # Your stuff...
 # ------------------------------------------------------------------------------
