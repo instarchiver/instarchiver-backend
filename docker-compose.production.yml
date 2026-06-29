@@ -17,7 +17,7 @@ services:
     volumes:
       - instarchiver_production_django_media:/app/core/media
     depends_on:
-      - postgres
+      - pgbouncer
       - redis
     env_file:
       - ./.envs/.production/.django
@@ -36,6 +36,23 @@ services:
       - instarchiver_production_postgres_data_backups:/backups
     env_file:
       - ./.envs/.production/.postgres
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: instarchiver_production_pgbouncer
+    env_file:
+      - ./.envs/.production/.postgres
+    environment:
+      - DB_HOST=postgres
+      - AUTH_TYPE=scram-sha-256
+      - POOL_MODE=transaction
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-h', 'localhost']
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: docker.io/redis:6

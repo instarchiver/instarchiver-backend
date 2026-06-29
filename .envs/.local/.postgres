@@ -1,6 +1,6 @@
 # PostgreSQL
 # ------------------------------------------------------------------------------
-POSTGRES_HOST=postgres
+POSTGRES_HOST=pgbouncer
 POSTGRES_PORT=5432
 POSTGRES_DB=core
 POSTGRES_USER=vnBBpYtVKPRsqHnKsQjZGPPUBZcLpZam
