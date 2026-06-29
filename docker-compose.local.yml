@@ -34,8 +34,25 @@ services:
       - instarchiver_local_postgres_data_backups:/backups
     env_file:
       - ./.envs/.local/.postgres
+    # ports:
+    #   - '54321:5432'
+
+  pgbouncer:
+    container_name: pgbouncer
+    ### build from source
+    image: edoburu/pgbouncer:latest
+    env_file:
+      - ./.envs/.local/.postgres
+    environment:
+      - DB_HOST=postgres
+      - AUTH_TYPE=scram-sha-256
+      - POOL_MODE=transaction
     ports:
-      - '54321:5432'
+      - "54321:5432"
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-h', 'localhost']
+    depends_on:
+      - postgres
 
   mailpit:
     image: docker.io/axllent/mailpit:latest
