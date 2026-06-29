@@ -11,9 +11,14 @@ services:
     image: instarchiver_local_django
     container_name: instarchiver_local_django
     depends_on:
-      - postgres
-      - redis
-      - mailpit
+      postgres:
+        condition: service_started
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      mailpit:
+        condition: service_started
     volumes:
       - .:/app:z
     env_file:
@@ -51,6 +56,9 @@ services:
       - "54321:5432"
     healthcheck:
       test: ['CMD', 'pg_isready', '-h', 'localhost']
+      interval: 5s
+      timeout: 5s
+      retries: 5
     depends_on:
       - postgres
 
@@ -71,9 +79,14 @@ services:
     image: instarchiver_local_celeryworker
     container_name: instarchiver_local_celeryworker
     depends_on:
-      - redis
-      - postgres
-      - mailpit
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_started
+      pgbouncer:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
     ports: []
     command: /start-celeryworker
 
@@ -82,9 +95,14 @@ services:
     image: instarchiver_local_celerybeat
     container_name: instarchiver_local_celerybeat
     depends_on:
-      - redis
-      - postgres
-      - mailpit
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_started
+      pgbouncer:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
     ports: []
     command: /start-celerybeat
 
