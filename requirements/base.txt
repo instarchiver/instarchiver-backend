@@ -21,7 +21,7 @@ django-allauth[mfa]==65.18.0  # https://github.com/pennersr/django-allauth
 django-crispy-forms==2.6  # https://github.com/django-crispy-forms/django-crispy-forms
 crispy-bootstrap5==2026.3  # https://github.com/django-crispy-forms/crispy-bootstrap5
 django-redis==6.0.0  # https://github.com/jazzband/django-redis
-django-simple-history==3.11.0  # https://django-simple-history.readthedocs.io/en/stable/index.html
+django-simple-history==3.12.0  # https://django-simple-history.readthedocs.io/en/stable/index.html
 django-storages==1.14.6  # https://github.com/jschneier/django-storages
 django-celery-results==2.6.0  # https://django-celery-results.readthedocs.io/en/latest/
 django-health-check==4.4.3  # https://pypi.org/project/django-health-check/
