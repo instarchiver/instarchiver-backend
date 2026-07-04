@@ -1,0 +1,63 @@
+volumes:
+  postgres_data: {}
+
+services:
+  django:
+    image: ghcr.io/${IMAGE_REPO}/django:pr-${PR_NUMBER}
+    mem_limit: 512m
+    cpus: 0.75
+    networks:
+      - preview-internal
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      # HTTPS router
+      - "traefik.http.routers.preview-pr${PR_NUMBER}.rule=Host(`pr-${PR_NUMBER}.preview.instarchiver.net`)"
+      - "traefik.http.routers.preview-pr${PR_NUMBER}.entrypoints=websecure"
+      - "traefik.http.routers.preview-pr${PR_NUMBER}.tls.certresolver=cloudflare"
+      - "traefik.http.services.preview-pr${PR_NUMBER}.loadbalancer.server.port=8000"
+      # HTTP router (Traefik config redirects web → websecure by default; HTTP will 301 to HTTPS)
+      - "traefik.http.routers.preview-pr${PR_NUMBER}-http.rule=Host(`pr-${PR_NUMBER}.preview.instarchiver.net`)"
+      - "traefik.http.routers.preview-pr${PR_NUMBER}-http.entrypoints=web"
+    env_file:
+      - ${SHARED_ENV_DIR}/.django
+      - ${SHARED_ENV_DIR}/.postgres
+      - .env
+    environment:
+      CELERY_TASK_ALWAYS_EAGER: "True"
+    command: /start
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  postgres:
+    image: ghcr.io/${IMAGE_REPO}/postgres:pr-${PR_NUMBER}
+    mem_limit: 256m
+    cpus: 0.25
+    networks:
+      - preview-internal
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - ${SHARED_ENV_DIR}/.postgres
+      - .env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: docker.io/axllent/mailpit:latest
+    mem_limit: 64m
+    cpus: 0.1
+    networks:
+      - preview-internal
+
+networks:
+  preview-internal:
+  traefik:
+    external: true

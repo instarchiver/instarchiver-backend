@@ -11,9 +11,14 @@ services:
     image: instarchiver_local_django
     container_name: instarchiver_local_django
     depends_on:
-      - postgres
-      - redis
-      - mailpit
+      postgres:
+        condition: service_started
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      mailpit:
+        condition: service_started
     volumes:
       - .:/app:z
     env_file:
@@ -34,8 +39,28 @@ services:
       - instarchiver_local_postgres_data_backups:/backups
     env_file:
       - ./.envs/.local/.postgres
+    # ports:
+    #   - '54321:5432'
+
+  pgbouncer:
+    container_name: pgbouncer
+    ### build from source
+    image: edoburu/pgbouncer:latest
+    env_file:
+      - ./.envs/.local/.postgres
+    environment:
+      - DB_HOST=postgres
+      - AUTH_TYPE=scram-sha-256
+      - POOL_MODE=transaction
     ports:
-      - '54321:5432'
+      - "54321:5432"
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-h', 'localhost']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      - postgres
 
   mailpit:
     image: docker.io/axllent/mailpit:latest
@@ -54,9 +79,14 @@ services:
     image: instarchiver_local_celeryworker
     container_name: instarchiver_local_celeryworker
     depends_on:
-      - redis
-      - postgres
-      - mailpit
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_started
+      pgbouncer:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
     ports: []
     command: /start-celeryworker
 
@@ -65,9 +95,14 @@ services:
     image: instarchiver_local_celerybeat
     container_name: instarchiver_local_celerybeat
     depends_on:
-      - redis
-      - postgres
-      - mailpit
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_started
+      pgbouncer:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
     ports: []
     command: /start-celerybeat
 
