@@ -7,7 +7,7 @@ https://unfoldadmin.com/docs/configuration/settings/
 
 UNFOLD = {
     "SITE_TITLE": "Instarchiver Admin",
-    "SITE_HEADER": "Instarchiver",
+    "SITE_HEADER": "Instarchiver Preview PR",
     "SITE_URL": "/",
     "SHOW_HISTORY": True,
     "SHOW_VIEW_ON_SITE": True,
