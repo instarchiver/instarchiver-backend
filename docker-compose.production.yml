@@ -13,6 +13,7 @@ services:
       dockerfile: ./compose/production/django/Dockerfile
 
     image: instarchiver_production_django
+    restart: unless-stopped
     mem_limit: 1g
     volumes:
       - instarchiver_production_django_media:/app/core/media
@@ -29,6 +30,7 @@ services:
       context: .
       dockerfile: ./compose/production/postgres/Dockerfile
     image: instarchiver_production_postgres
+    restart: unless-stopped
     ports:
       - 100.73.60.108:65432:5432
     volumes:
@@ -40,6 +42,7 @@ services:
   pgbouncer:
     image: edoburu/pgbouncer:latest
     container_name: instarchiver_production_pgbouncer
+    restart: unless-stopped
     env_file:
       - ./.envs/.production/.postgres
     environment:
@@ -56,6 +59,7 @@ services:
 
   redis:
     image: docker.io/redis:6
+    restart: unless-stopped
     volumes:
       - instarchiver_production_redis_data:/data
     ports:
@@ -82,6 +86,7 @@ services:
       context: .
       dockerfile: ./compose/production/nginx/Dockerfile
     image: instarchiver_production_nginx
+    restart: unless-stopped
     depends_on:
       - django
     volumes:
