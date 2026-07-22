@@ -14,7 +14,7 @@ services:
 
     image: instarchiver_production_django
     restart: unless-stopped
-    mem_limit: 1g
+    mem_limit: 512m
     volumes:
       - instarchiver_production_django_media:/app/core/media
     depends_on:
@@ -69,6 +69,7 @@ services:
   celeryworker:
     <<: *django
     image: instarchiver_production_celeryworker
+    mem_limit: 384m
     command: /start-celeryworker
 
   celerybeat:
@@ -79,6 +80,7 @@ services:
   flower:
     <<: *django
     image: instarchiver_production_flower
+    mem_limit: 256m
     command: /start-flower
 
   nginx:

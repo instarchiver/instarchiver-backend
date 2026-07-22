@@ -10,7 +10,7 @@ services:
   django: &django
     image: ghcr.io/instarchiver/instarchiver-backend/django:latest
     restart: unless-stopped
-    mem_limit: 1g
+    mem_limit: 512m
     volumes:
       - instarchiver_production_django_media:/app/core/media
     depends_on:
@@ -62,6 +62,7 @@ services:
   celeryworker:
     <<: *django
     image: ghcr.io/instarchiver/instarchiver-backend/django:latest
+    mem_limit: 384m
     command: /start-celeryworker
 
   celerybeat:
@@ -72,6 +73,7 @@ services:
   flower:
     <<: *django
     image: ghcr.io/instarchiver/instarchiver-backend/django:latest
+    mem_limit: 256m
     command: /start-flower
 
   nginx:
