@@ -4,6 +4,7 @@ from celery import shared_task
 from django.db.models import F
 
 from instagram.models import Story
+from instagram.models.story import is_video_filename
 from instagram.utils import generate_blur_data_url_from_image_url
 
 logger = logging.getLogger(__name__)
@@ -61,10 +62,47 @@ def download_story_media_from_url(self, story_id: str) -> dict:
         if saved_name:
             Story.objects.filter(story_id=story_id).update(media=saved_name)
             logger.info("Media downloaded for story %s", story_id)
+
+            # Video stories from SaveAPI have no thumbnail URL, so build one
+            # from the video now that it is in storage.
+            if (
+                not story.thumbnail_url
+                and not story.thumbnail
+                and is_video_filename(saved_name)
+            ):
+                generate_story_thumbnail_from_media.delay(story_id)
         return {
             "success": True,
             "story_id": story_id,
             "downloaded": bool(saved_name),
+        }
+    except Exception as exc:
+        countdown = 60 * (2**self.request.retries)
+        raise self.retry(exc=exc, countdown=countdown) from exc
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def generate_story_thumbnail_from_media(self, story_id: str) -> dict:
+    """
+    Generate a thumbnail for a video story from its stored media file.
+    Delegates to Story.generate_thumbnail_from_media() and saves via queryset
+    update to avoid re-triggering the post_save signal.
+    """
+    try:
+        story = Story.objects.get(story_id=story_id)
+    except Story.DoesNotExist:
+        logger.exception("Story with ID %s not found", story_id)
+        return {"success": False, "error": "Story not found"}
+
+    try:
+        saved_name = story.generate_thumbnail_from_media()
+        if saved_name:
+            Story.objects.filter(story_id=story_id).update(thumbnail=saved_name)
+            logger.info("Thumbnail generated from media for story %s", story_id)
+        return {
+            "success": True,
+            "story_id": story_id,
+            "generated": bool(saved_name),
         }
     except Exception as exc:
         countdown = 60 * (2**self.request.retries)
