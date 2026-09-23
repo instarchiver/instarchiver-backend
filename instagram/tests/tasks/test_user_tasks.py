@@ -13,6 +13,7 @@ from instagram.tasks import auto_update_user_story
 from instagram.tasks import auto_update_users_profile
 from instagram.tasks import auto_update_users_story
 from instagram.tasks import increment_user_view_count
+from instagram.tasks import update_all_users_story_from_saveapi
 from instagram.tasks import update_profile_picture_from_url
 from instagram.tasks import update_user_posts_from_api
 from instagram.tasks import update_user_stories_from_api
@@ -747,3 +748,49 @@ class TestIncrementUserViewCount(TestCase):
 
     def test_missing_user_is_a_no_op(self):
         increment_user_view_count("00000000-0000-0000-0000-000000000000")
+
+
+class TestUpdateAllUsersStoryFromSaveApi(TestCase):
+    """Tests for the update_all_users_story_from_saveapi Celery task."""
+
+    @patch("instagram.tasks.user.update_user_stories_from_saveapi.delay")
+    def test_queues_every_user_regardless_of_flag(self, mock_delay):
+        """Users are queued whether or not auto-update is enabled."""
+        User.objects.all().delete()
+        enabled = InstagramUserFactory(allow_auto_update_stories=True)
+        disabled = InstagramUserFactory(allow_auto_update_stories=False)
+        mock_delay.return_value = Mock(id="task-id")
+
+        result = update_all_users_story_from_saveapi()
+
+        assert result["success"] is True
+        assert result["total"] == 2  # noqa: PLR2004
+        assert result["queued"] == 2  # noqa: PLR2004
+        assert result["errors"] == 0
+        queued_ids = {call.args[0] for call in mock_delay.call_args_list}
+        assert queued_ids == {str(enabled.uuid), str(disabled.uuid)}
+
+    @patch("instagram.tasks.user.update_user_stories_from_saveapi.delay")
+    def test_no_users(self, mock_delay):
+        """Nothing is queued when there are no users."""
+        User.objects.all().delete()
+
+        result = update_all_users_story_from_saveapi()
+
+        assert result["success"] is True
+        assert result["queued"] == 0
+        mock_delay.assert_not_called()
+
+    @patch("instagram.tasks.user.update_user_stories_from_saveapi.delay")
+    def test_queue_error_does_not_stop_other_users(self, mock_delay):
+        """A failed enqueue is counted and the remaining users still queue."""
+        User.objects.all().delete()
+        InstagramUserFactory(username="first")
+        InstagramUserFactory(username="second")
+        mock_delay.side_effect = [Exception("Broker down"), Mock(id="task-2")]
+
+        result = update_all_users_story_from_saveapi()
+
+        assert result["queued"] == 1
+        assert result["errors"] == 1
+        assert "Broker down" in result["error_details"][0]

@@ -574,6 +574,79 @@ def auto_update_users_story():
         return {"success": False, "error": f"Critical error: {e!s}"}
 
 
+@shared_task
+def update_all_users_story_from_saveapi():
+    """
+    Queue a SaveAPI story update for every user.
+    Unlike auto_update_users_story, this ignores allow_auto_update_stories.
+    Each user costs SaveAPI credits on every run.
+    Returns summary of operations performed.
+    """
+    try:
+        users = User.objects.all()
+        total_users = users.count()
+
+        if total_users == 0:
+            logger.info("No users found for SaveAPI story update")
+            return {
+                "success": True,
+                "message": "No users to update",
+                "queued": 0,
+                "errors": 0,
+            }
+
+        logger.info("Starting SaveAPI story update for %d users", total_users)
+
+        queued_count = 0
+        error_count = 0
+        errors = []
+        task_ids = []
+
+        for user in users.iterator():
+            try:
+                task_result = update_user_stories_from_saveapi.delay(str(user.uuid))
+                task_ids.append(task_result.id)
+                queued_count += 1
+                logger.info(
+                    "Successfully queued SaveAPI story update for user: %s (task: %s)",
+                    user.username,
+                    task_result.id,
+                )
+            except Exception as e:
+                error_count += 1
+                error_msg = (
+                    f"Failed to queue SaveAPI story update for user "
+                    f"{user.username}: {e!s}"
+                )
+                errors.append(error_msg)
+                logger.exception(
+                    "Error queuing SaveAPI story update for user %s",
+                    user.username,
+                )
+
+        logger.info(
+            "SaveAPI story update queuing completed: %d queued, %d errors"
+            " out of %d total users",
+            queued_count,
+            error_count,
+            total_users,
+        )
+
+        return {  # noqa: TRY300
+            "success": True,
+            "message": "SaveAPI story update tasks queued",
+            "total": total_users,
+            "queued": queued_count,
+            "errors": error_count,
+            "error_details": errors if errors else None,
+            "task_ids": task_ids,
+        }
+
+    except Exception as e:
+        logger.exception("Critical error in update_all_users_story_from_saveapi")
+        return {"success": False, "error": f"Critical error: {e!s}"}
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def auto_update_user_story(self, user_id):
     """
