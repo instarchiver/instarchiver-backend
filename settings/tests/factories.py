@@ -33,6 +33,15 @@ class CoreAPISettingFactory(DjangoModelFactory):
         upper_case=True,
         lower_case=True,
     )
+    saveapi_url = Faker("url")
+    saveapi_api_key = Faker(
+        "password",
+        length=64,
+        special_chars=False,
+        digits=True,
+        upper_case=True,
+        lower_case=True,
+    )
 
     class Meta:
         model = CoreAPISetting

@@ -45,6 +45,18 @@ class CoreAPISetting(SingletonModel):
         blank=True,
         help_text="Core API Token",
     )
+    saveapi_url = models.URLField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="SaveAPI base URL",
+    )
+    saveapi_api_key = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="SaveAPI API key",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

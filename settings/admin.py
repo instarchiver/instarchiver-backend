@@ -67,6 +67,13 @@ class CoreAPISettingAdmin(SingletonModelAdmin, ModelAdmin):
             },
         ),
         (
+            "SaveAPI Configuration",
+            {
+                "fields": ("saveapi_url", "saveapi_api_key"),
+                "description": "Configure SaveAPI settings",
+            },
+        ),
+        (
             "Timestamps",
             {
                 "fields": ("created_at", "updated_at"),
