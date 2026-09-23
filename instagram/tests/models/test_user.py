@@ -422,3 +422,111 @@ class TestUserUpdateStoriesFromApi(TestCase):
         }
         user._update_stories_from_api()  # noqa: SLF001
         assert Story.objects.filter(story_id="existing_story").count() == 1
+
+
+SAVEAPI_IMAGE_URL = (
+    "https://scontent.cdninstagram.com/v/t51/111_222_333_n.webp?oh=abc&oe=1"
+)
+SAVEAPI_VIDEO_URL = (
+    "https://scontent.cdninstagram.com/o1/v/t2/f2/m78/AQN_video.mp4?oh=abc"
+)
+
+
+class TestUserUpdateStoriesFromSaveApi(TestCase):
+    """Tests for User._update_stories_from_saveapi and related methods."""
+
+    def _response(self, *medias):
+        return {"success": True, "type": "album", "medias": list(medias)}
+
+    @patch("instagram.models.user.fetch_user_stories_from_saveapi")
+    def test_creates_image_and_video_stories(self, mock_fetch):
+        """Image stories keep the URL as thumbnail; video stories get none."""
+        user = InstagramUserFactory(username="saveapiuser")
+        mock_fetch.return_value = self._response(
+            {"type": "image", "url": SAVEAPI_IMAGE_URL, "ext": "webp"},
+            {"type": "video", "url": SAVEAPI_VIDEO_URL, "ext": "mp4"},
+        )
+
+        updated = user._update_stories_from_saveapi()  # noqa: SLF001
+
+        assert len(updated) == 2  # noqa: PLR2004
+        image_story, video_story = updated
+        assert image_story.thumbnail_url == SAVEAPI_IMAGE_URL
+        assert image_story.media_url == SAVEAPI_IMAGE_URL
+        assert video_story.thumbnail_url == ""
+        assert video_story.media_url == SAVEAPI_VIDEO_URL
+        assert len(image_story.story_id) == 40  # noqa: PLR2004
+        assert image_story.user == user
+        assert image_story.story_created_at is not None
+
+        log = UserUpdateStoryLog.objects.filter(user=user).first()
+        assert log.status == UserUpdateStoryLog.STATUS_COMPLETED
+
+    @patch("instagram.models.user.fetch_user_stories_from_saveapi")
+    def test_story_id_ignores_query_string(self, mock_fetch):
+        """The same media with new signatures maps to the same story."""
+        user = InstagramUserFactory(username="stableid")
+        mock_fetch.return_value = self._response(
+            {"type": "image", "url": SAVEAPI_IMAGE_URL},
+        )
+        user._update_stories_from_saveapi()  # noqa: SLF001
+
+        resigned_url = SAVEAPI_IMAGE_URL.split("?", maxsplit=1)[0] + "?oh=new"
+        mock_fetch.return_value = self._response(
+            {"type": "image", "url": resigned_url},
+        )
+        user._update_stories_from_saveapi()  # noqa: SLF001
+
+        assert Story.objects.filter(user=user).count() == 1
+
+    @patch("instagram.models.user.fetch_user_stories_from_saveapi")
+    def test_skips_media_without_url(self, mock_fetch):
+        """Media entries without a URL are ignored."""
+        user = InstagramUserFactory(username="nourl")
+        mock_fetch.return_value = self._response({"type": "image", "url": None})
+
+        assert user._update_stories_from_saveapi() == []  # noqa: SLF001
+
+    @patch("instagram.models.user.fetch_user_stories_from_saveapi")
+    def test_unsuccessful_response_sets_log_failed(self, mock_fetch):
+        """A success=false response fails the log and raises."""
+        user = InstagramUserFactory(username="failsave")
+        mock_fetch.return_value = {
+            "success": False,
+            "error": {"code": "INVALID_URL", "message": "Bad link"},
+        }
+
+        with pytest.raises(Exception, match="INVALID_URL: Bad link"):
+            user._update_stories_from_saveapi()  # noqa: SLF001
+
+        log = UserUpdateStoryLog.objects.filter(user=user).first()
+        assert log.status == UserUpdateStoryLog.STATUS_FAILED
+        assert "INVALID_URL" in log.message
+
+    @patch("instagram.models.user.fetch_user_stories_from_saveapi")
+    def test_request_exception_sets_log_failed(self, mock_fetch):
+        """An exception from the client fails the log and is re-raised."""
+        user = InstagramUserFactory(username="raisesave")
+        mock_fetch.side_effect = RuntimeError("Connection reset")
+
+        with pytest.raises(RuntimeError):
+            user._update_stories_from_saveapi()  # noqa: SLF001
+
+        log = UserUpdateStoryLog.objects.filter(user=user).first()
+        assert log.status == UserUpdateStoryLog.STATUS_FAILED
+        assert "Connection reset" in log.message
+
+    @patch("instagram.models.user.fetch_user_stories_from_saveapi")
+    def test_sync_wrapper(self, mock_fetch):
+        """update_stories_from_saveapi delegates to the private method."""
+        user = InstagramUserFactory(username="syncsave")
+        mock_fetch.return_value = self._response()
+
+        assert user.update_stories_from_saveapi() == []
+
+    @patch("instagram.tasks.update_user_stories_from_saveapi.delay")
+    def test_async_queues_task(self, mock_delay):
+        """update_stories_from_saveapi_async queues the Celery task."""
+        user = InstagramUserFactory()
+        user.update_stories_from_saveapi_async()
+        mock_delay.assert_called_once_with(user.uuid)

@@ -92,6 +92,37 @@ class TestInstagramUserAdminActions(TestCase):
         assert len(messages) == 1
         assert "Failed to queue" in str(messages[0])
 
+    @patch("instagram.admin.user.User.update_stories_from_saveapi_async")
+    def test_update_stories_from_saveapi_success(self, mock_async):
+        """Test update_stories_from_saveapi action queues task and redirects."""
+        mock_result = MagicMock()
+        mock_result.id = "task-save"
+        mock_async.return_value = mock_result
+        request = self._get_request_with_messages()
+        response = self.admin.update_stories_from_saveapi(
+            request,
+            object_id=str(self.user.pk),
+        )
+        assert isinstance(response, HttpResponseRedirect)
+        mock_async.assert_called_once()
+        messages = list(get_messages(request))
+        assert len(messages) == 1
+        assert "Successfully queued SaveAPI" in str(messages[0])
+
+    @patch("instagram.admin.user.User.update_stories_from_saveapi_async")
+    def test_update_stories_from_saveapi_error(self, mock_async):
+        """Test update_stories_from_saveapi action handles errors gracefully."""
+        mock_async.side_effect = Exception("Queue full")
+        request = self._get_request_with_messages()
+        response = self.admin.update_stories_from_saveapi(
+            request,
+            object_id=str(self.user.pk),
+        )
+        assert isinstance(response, HttpResponseRedirect)
+        messages = list(get_messages(request))
+        assert len(messages) == 1
+        assert "Failed to queue SaveAPI" in str(messages[0])
+
     @patch("instagram.admin.user.User.update_posts_from_api_async")
     def test_update_posts_from_api_success(self, mock_async):
         """Test update_posts_from_api action queues task and redirects."""

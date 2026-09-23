@@ -56,18 +56,20 @@ def validate_settings() -> bool:
         return False
 
 
-def make_request(
+def send_logged_request(  # noqa: PLR0913
+    session: requests.Session,
     method: str,
-    endpoint: str,
+    url: str,
     data: dict[str, Any] | None = None,
     params: dict[str, Any] | None = None,
     timeout: int = 30,
 ) -> requests.Response:
-    """Make HTTP request to Core API.
+    """Send an HTTP request and record it in APIRequestLog.
 
     Args:
+        session: Session with auth headers already set
         method: HTTP method (GET, POST, PUT, DELETE, etc.)
-        endpoint: API endpoint path (without base URL)
+        url: Full request URL
         data: Request payload for POST/PUT requests
         params: Query parameters
         timeout: Request timeout in seconds
@@ -76,15 +78,8 @@ def make_request(
         Response object
 
     Raises:
-        ImproperlyConfigured: If API settings are not configured
         requests.RequestException: If request fails
     """
-    base_url = get_api_url().rstrip("/")
-    endpoint_clean = endpoint.lstrip("/")
-    url = f"{base_url}/{endpoint_clean}"
-
-    session = get_core_api_session()
-
     # Create log entry
     api_log = APIRequestLog.objects.create(
         method=method.upper(),
@@ -131,7 +126,7 @@ def make_request(
         api_log.duration_ms = duration_ms
         api_log.error_message = str(e)
         api_log.save()
-        logger.exception("Core API request timeout: %s", e)  # noqa: TRY401
+        logger.exception("API request timeout: %s", e)  # noqa: TRY401
         raise
 
     except requests.RequestException as e:
@@ -149,8 +144,46 @@ def make_request(
                 api_log.response_body = {"raw_content": e.response.text[:1000]}
 
         api_log.save()
-        logger.exception("Core API request failed: %s", e)  # noqa: TRY401
+        logger.exception("API request failed: %s", e)  # noqa: TRY401
         raise
+
+
+def make_request(
+    method: str,
+    endpoint: str,
+    data: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+    timeout: int = 30,
+) -> requests.Response:
+    """Make HTTP request to Core API.
+
+    Args:
+        method: HTTP method (GET, POST, PUT, DELETE, etc.)
+        endpoint: API endpoint path (without base URL)
+        data: Request payload for POST/PUT requests
+        params: Query parameters
+        timeout: Request timeout in seconds
+
+    Returns:
+        Response object
+
+    Raises:
+        ImproperlyConfigured: If API settings are not configured
+        requests.RequestException: If request fails
+    """
+    base_url = get_api_url().rstrip("/")
+    endpoint_clean = endpoint.lstrip("/")
+    url = f"{base_url}/{endpoint_clean}"
+
+    session = get_core_api_session()
+    return send_logged_request(
+        session,
+        method,
+        url,
+        data=data,
+        params=params,
+        timeout=timeout,
+    )
 
 
 def check_connection() -> bool:

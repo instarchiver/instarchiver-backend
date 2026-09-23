@@ -6,6 +6,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Instarchiver Backend is a Django 5.2 REST API service for archiving Instagram content. Built on the cookiecutter-django template, it uses PostgreSQL, Redis, and Celery for background processing.
 
+## Writing Guidelines
+
+Always use the `humanizer:humanizer` skill when writing or editing prose, including:
+
+- Documentation (README, CLAUDE.md, files under `docs/`)
+- Docstrings and code comments
+- Commit messages and pull request descriptions
+- Changelogs, API descriptions (drf-spectacular `help_text`, `summary`, `description`), and user-facing messages
+
+Write the text first, then run it through the humanizer before saving.
+
+## Planning Guidelines
+
+Every plan gets an evil reviewer pass before it is presented or executed. This covers plan mode, the `agent-skills:plan` / `agent-skills:planning-and-task-breakdown` skills, specs, and any multi-step implementation plan.
+
+The evil reviewer is a fresh-context subagent run through the `agent-skills:doubt-driven-development` skill. Give it the plan and the relevant code, and tell it to attack the plan: wrong assumptions about the codebase, missing steps, migrations or data that could break, Celery/signal side effects, security holes, and simpler alternatives that were skipped.
+
+After the review:
+
+- Fix the plan for every valid finding.
+- For findings you reject, say why in one line.
+- Show the user the revised plan along with a short summary of what the reviewer found.
+
 ## Development Commands
 
 All development is done through Docker using justfile commands or docker-compose directly.

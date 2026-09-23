@@ -19,6 +19,7 @@ class InstagramUserAdmin(SimpleHistoryAdmin, ModelAdmin):
             "items": [
                 "update_from_api",
                 "update_stories_from_api",
+                "update_stories_from_saveapi",
                 "update_posts_from_api",
             ],
         },
@@ -136,6 +137,29 @@ class InstagramUserAdmin(SimpleHistoryAdmin, ModelAdmin):
             messages.error(
                 request,
                 "Failed to queue story update task: %s" % str(e),  # noqa: UP031
+            )
+
+        return redirect(reverse("admin:instagram_user_change", args=(object_id,)))
+
+    @action(
+        description=_("Update Stories (SaveAPI)"),
+        icon="refresh",
+        url_path="update-stories-from-saveapi",
+        permissions=["change"],
+    )
+    def update_stories_from_saveapi(self, request: HttpRequest, object_id: str):
+        """Update user stories from SaveAPI asynchronously."""
+        try:
+            user = User.objects.get(pk=object_id)
+            task_result = user.update_stories_from_saveapi_async()
+            messages.success(
+                request,
+                f"Successfully queued SaveAPI story update task for {user.username}. Task ID: {task_result.id}",  # noqa: E501
+            )
+        except Exception as e:  # noqa: BLE001
+            messages.error(
+                request,
+                "Failed to queue SaveAPI story update task: %s" % str(e),  # noqa: UP031
             )
 
         return redirect(reverse("admin:instagram_user_change", args=(object_id,)))

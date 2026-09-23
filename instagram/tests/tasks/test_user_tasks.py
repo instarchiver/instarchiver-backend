@@ -13,9 +13,11 @@ from instagram.tasks import auto_update_user_story
 from instagram.tasks import auto_update_users_profile
 from instagram.tasks import auto_update_users_story
 from instagram.tasks import increment_user_view_count
+from instagram.tasks import update_all_users_story_from_saveapi
 from instagram.tasks import update_profile_picture_from_url
 from instagram.tasks import update_user_posts_from_api
 from instagram.tasks import update_user_stories_from_api
+from instagram.tasks import update_user_stories_from_saveapi
 from instagram.tests.factories import InstagramUserFactory
 
 
@@ -245,6 +247,59 @@ class TestUpdateUserStoriesFromApi(TestCase):
         assert isinstance(result, EagerResult)
         assert result.result["success"] is False
         assert "Invalid data format" in result.result["error"]
+
+
+class TestUpdateUserStoriesFromSaveApi(TestCase):
+    """Tests for the update_user_stories_from_saveapi Celery task."""
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    def test_success(self, mock_update_stories):
+        """Test successful story update from SaveAPI."""
+        user = InstagramUserFactory(username="saveapitask")
+        mock_update_stories.return_value = [{"id": "1"}, {"id": "2"}]
+
+        result = update_user_stories_from_saveapi.delay(str(user.uuid))
+
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is True
+        assert result.result["stories_count"] == 2  # noqa: PLR2004
+        mock_update_stories.assert_called_once()
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_user_not_found(self):
+        """Test handling of non-existent user."""
+        result = update_user_stories_from_saveapi.delay(
+            "00000000-0000-0000-0000-000000000000",
+        )
+
+        assert result.result["success"] is False
+        assert "not found" in result.result["error"].lower()
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    def test_rate_limit_error_is_retried(self, mock_update_stories):
+        """A 429 error is retried until retries run out."""
+        user = InstagramUserFactory(username="saveapiretry")
+        mock_update_stories.side_effect = Exception("429 Client Error")
+
+        result = update_user_stories_from_saveapi.delay(str(user.uuid))
+
+        assert result.result["success"] is False
+        assert mock_update_stories.call_count == 6  # noqa: PLR2004
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    def test_non_retryable_error(self, mock_update_stories):
+        """A non-retryable error returns the failure without retrying."""
+        user = InstagramUserFactory(username="saveapifail")
+        mock_update_stories.side_effect = Exception("INVALID_URL: Bad link")
+
+        result = update_user_stories_from_saveapi.delay(str(user.uuid))
+
+        assert result.result["success"] is False
+        assert "INVALID_URL" in result.result["error"]
+        mock_update_stories.assert_called_once()
 
 
 class TestUpdateUserPostsFromApi(TestCase):
@@ -693,3 +748,49 @@ class TestIncrementUserViewCount(TestCase):
 
     def test_missing_user_is_a_no_op(self):
         increment_user_view_count("00000000-0000-0000-0000-000000000000")
+
+
+class TestUpdateAllUsersStoryFromSaveApi(TestCase):
+    """Tests for the update_all_users_story_from_saveapi Celery task."""
+
+    @patch("instagram.tasks.user.update_user_stories_from_saveapi.delay")
+    def test_queues_every_user_regardless_of_flag(self, mock_delay):
+        """Users are queued whether or not auto-update is enabled."""
+        User.objects.all().delete()
+        enabled = InstagramUserFactory(allow_auto_update_stories=True)
+        disabled = InstagramUserFactory(allow_auto_update_stories=False)
+        mock_delay.return_value = Mock(id="task-id")
+
+        result = update_all_users_story_from_saveapi()
+
+        assert result["success"] is True
+        assert result["total"] == 2  # noqa: PLR2004
+        assert result["queued"] == 2  # noqa: PLR2004
+        assert result["errors"] == 0
+        queued_ids = {call.args[0] for call in mock_delay.call_args_list}
+        assert queued_ids == {str(enabled.uuid), str(disabled.uuid)}
+
+    @patch("instagram.tasks.user.update_user_stories_from_saveapi.delay")
+    def test_no_users(self, mock_delay):
+        """Nothing is queued when there are no users."""
+        User.objects.all().delete()
+
+        result = update_all_users_story_from_saveapi()
+
+        assert result["success"] is True
+        assert result["queued"] == 0
+        mock_delay.assert_not_called()
+
+    @patch("instagram.tasks.user.update_user_stories_from_saveapi.delay")
+    def test_queue_error_does_not_stop_other_users(self, mock_delay):
+        """A failed enqueue is counted and the remaining users still queue."""
+        User.objects.all().delete()
+        InstagramUserFactory(username="first")
+        InstagramUserFactory(username="second")
+        mock_delay.side_effect = [Exception("Broker down"), Mock(id="task-2")]
+
+        result = update_all_users_story_from_saveapi()
+
+        assert result["queued"] == 1
+        assert result["errors"] == 1
+        assert "Broker down" in result["error_details"][0]

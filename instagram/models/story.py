@@ -13,6 +13,13 @@ from instagram.models.mixins import ViewCountMixin
 
 logger = logging.getLogger(__name__)
 
+VIDEO_EXTENSIONS = {"mp4", "mov", "webm"}
+
+
+def is_video_filename(name: str | None) -> bool:
+    """Return True if the file name has a video extension."""
+    return bool(name) and name.rsplit(".", 1)[-1].lower() in VIDEO_EXTENSIONS
+
 
 class Story(InstagramModerationMixin, ViewCountMixin):
     story_id = models.CharField(unique=True, max_length=50, primary_key=True)
@@ -88,6 +95,41 @@ class Story(InstagramModerationMixin, ViewCountMixin):
             logger.info("Downloaded media for story %s", self.story_id)
             return self.media.name
         return None
+
+    def generate_thumbnail_from_media(self) -> str | None:
+        """
+        Build a JPEG thumbnail from a frame of the stored video media.
+
+        Used for video stories that come without a thumbnail. The video is
+        read from storage, so the Instagram CDN URL is not needed anymore.
+
+        Returns:
+            Saved file name if generated, None otherwise.
+        """
+        from io import BytesIO  # noqa: PLC0415
+
+        from django.core.files.base import ContentFile  # noqa: PLC0415
+
+        from instagram.utils import extract_video_frame  # noqa: PLC0415
+
+        if self.thumbnail or not self.is_video_media():
+            return None
+
+        with self.media.open("rb") as media_file:
+            video = BytesIO(media_file.read())
+
+        content = extract_video_frame(video)
+        if not content:
+            return None
+
+        filename = f"{uuid.uuid4()}.jpg"
+        self.thumbnail.save(filename, ContentFile(content), save=False)
+        logger.info("Generated thumbnail from media for story %s", self.story_id)
+        return self.thumbnail.name
+
+    def is_video_media(self) -> bool:
+        """Return True if the stored media file is a video."""
+        return bool(self.media) and is_video_filename(self.media.name)
 
     def queue_thumbnail_download(self) -> None:
         """Queue a background task to download the thumbnail file."""

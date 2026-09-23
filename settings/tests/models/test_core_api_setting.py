@@ -12,6 +12,8 @@ class CoreAPISettingModelTest(TestCase):
         assert isinstance(setting, CoreAPISetting)
         assert setting.api_url
         assert setting.api_token
+        assert setting.saveapi_url
+        assert setting.saveapi_api_key
         assert setting.created_at is not None
         assert setting.updated_at is not None
 
@@ -40,6 +42,8 @@ class CoreAPISettingModelTest(TestCase):
 
         assert setting.api_url == ""
         assert setting.api_token == ""
+        assert setting.saveapi_url == ""
+        assert setting.saveapi_api_key == ""
         assert setting.created_at is not None
         assert setting.updated_at is not None
 
@@ -52,6 +56,10 @@ class CoreAPISettingModelTest(TestCase):
 
         # Test api_token max length (from model definition)
         assert len(setting.api_token) <= 255  # noqa: PLR2004
+
+        # Test SaveAPI field max lengths (from model definition)
+        assert len(setting.saveapi_url) <= 255  # noqa: PLR2004
+        assert len(setting.saveapi_api_key) <= 255  # noqa: PLR2004
 
     def test_factory_generates_realistic_data(self):
         """Test that factory generates realistic Core API data."""
