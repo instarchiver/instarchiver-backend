@@ -16,6 +16,7 @@ from instagram.tasks import increment_user_view_count
 from instagram.tasks import update_profile_picture_from_url
 from instagram.tasks import update_user_posts_from_api
 from instagram.tasks import update_user_stories_from_api
+from instagram.tasks import update_user_stories_from_saveapi
 from instagram.tests.factories import InstagramUserFactory
 
 
@@ -245,6 +246,59 @@ class TestUpdateUserStoriesFromApi(TestCase):
         assert isinstance(result, EagerResult)
         assert result.result["success"] is False
         assert "Invalid data format" in result.result["error"]
+
+
+class TestUpdateUserStoriesFromSaveApi(TestCase):
+    """Tests for the update_user_stories_from_saveapi Celery task."""
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    def test_success(self, mock_update_stories):
+        """Test successful story update from SaveAPI."""
+        user = InstagramUserFactory(username="saveapitask")
+        mock_update_stories.return_value = [{"id": "1"}, {"id": "2"}]
+
+        result = update_user_stories_from_saveapi.delay(str(user.uuid))
+
+        assert isinstance(result, EagerResult)
+        assert result.result["success"] is True
+        assert result.result["stories_count"] == 2  # noqa: PLR2004
+        mock_update_stories.assert_called_once()
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_user_not_found(self):
+        """Test handling of non-existent user."""
+        result = update_user_stories_from_saveapi.delay(
+            "00000000-0000-0000-0000-000000000000",
+        )
+
+        assert result.result["success"] is False
+        assert "not found" in result.result["error"].lower()
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    def test_rate_limit_error_is_retried(self, mock_update_stories):
+        """A 429 error is retried until retries run out."""
+        user = InstagramUserFactory(username="saveapiretry")
+        mock_update_stories.side_effect = Exception("429 Client Error")
+
+        result = update_user_stories_from_saveapi.delay(str(user.uuid))
+
+        assert result.result["success"] is False
+        assert mock_update_stories.call_count == 6  # noqa: PLR2004
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    def test_non_retryable_error(self, mock_update_stories):
+        """A non-retryable error returns the failure without retrying."""
+        user = InstagramUserFactory(username="saveapifail")
+        mock_update_stories.side_effect = Exception("INVALID_URL: Bad link")
+
+        result = update_user_stories_from_saveapi.delay(str(user.uuid))
+
+        assert result.result["success"] is False
+        assert "INVALID_URL" in result.result["error"]
+        mock_update_stories.assert_called_once()
 
 
 class TestUpdateUserPostsFromApi(TestCase):

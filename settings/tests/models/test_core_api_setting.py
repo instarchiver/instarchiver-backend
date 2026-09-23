@@ -42,7 +42,7 @@ class CoreAPISettingModelTest(TestCase):
 
         assert setting.api_url == ""
         assert setting.api_token == ""
-        assert setting.saveapi_url == "https://api.saveapi.org/v1"
+        assert setting.saveapi_url == ""
         assert setting.saveapi_api_key == ""
         assert setting.created_at is not None
         assert setting.updated_at is not None
