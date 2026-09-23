@@ -1,5 +1,7 @@
+import hashlib
 import logging
 import uuid
+from urllib.parse import urlparse
 
 from django.db import models
 from django.utils import timezone
@@ -9,6 +11,7 @@ from core.utils.instagram_api import fetch_user_info_by_user_id
 from core.utils.instagram_api import fetch_user_info_by_username_v2
 from core.utils.instagram_api import fetch_user_posts_by_username
 from core.utils.instagram_api import fetch_user_stories_by_username
+from core.utils.saveapi import fetch_user_stories as fetch_user_stories_from_saveapi
 from instagram.misc import get_user_profile_picture_upload_location
 from instagram.models.mixins import ViewCountMixin
 
@@ -378,6 +381,104 @@ class User(GetUserPostMixIn, ViewCountMixin):
                 e,  # noqa: TRY401
             )
             raise
+
+    def _update_stories_from_saveapi(self):
+        """Update user stories from SaveAPI and record the run in UserUpdateStoryLog.
+
+        SaveAPI does not return story IDs or timestamps. The story ID is a SHA-1
+        of the media URL path (the query string holds signatures that change on
+        every request), and story_created_at is the fetch time. Video items have
+        no thumbnail; one is generated from the video after it is stored.
+        """
+        # Import here to avoid circular imports
+        from .story import Story  # noqa: PLC0415
+        from .story import UserUpdateStoryLog  # noqa: PLC0415
+
+        log_entry = UserUpdateStoryLog.objects.create(
+            user=self,
+            status=UserUpdateStoryLog.STATUS_IN_PROGRESS,
+            message="Started story update from SaveAPI",
+        )
+
+        try:
+            response = fetch_user_stories_from_saveapi(self.username)
+
+            if not response.get("success"):
+                error = response.get("error") or {}
+                msg = (
+                    f"Error fetching stories from SaveAPI for user {self.username}. "
+                    f"{error.get('code', 'UNKNOWN')}: "
+                    f"{error.get('message', 'Unknown API error')}"
+                )
+                logger.error(msg)
+
+                log_entry.status = UserUpdateStoryLog.STATUS_FAILED
+                log_entry.message = msg
+                log_entry.save()
+
+                raise Exception(msg)  # noqa: TRY002, TRY301
+
+            updated_stories = []
+            fetched_at = timezone.now()
+
+            for media in response.get("medias") or []:
+                media_url = media.get("url")
+                if not media_url:
+                    continue
+
+                story_id = hashlib.sha1(  # noqa: S324
+                    urlparse(media_url).path.encode(),
+                ).hexdigest()
+                is_image = media.get("type") == "image"
+
+                story, _ = Story.objects.get_or_create(
+                    story_id=story_id,
+                    defaults={
+                        "user": self,
+                        "thumbnail_url": media_url if is_image else "",
+                        "media_url": media_url,
+                        "story_created_at": fetched_at,
+                        "raw_api_data": media,
+                    },
+                )
+                updated_stories.append(story)
+
+            log_entry.status = UserUpdateStoryLog.STATUS_COMPLETED
+            log_entry.message = (
+                f"Successfully updated {len(updated_stories)} stories from SaveAPI"
+            )
+            log_entry.save()
+
+            logger.info(
+                "Successfully updated %d stories from SaveAPI for user %s",
+                len(updated_stories),
+                self.username,
+            )
+            return updated_stories  # noqa: TRY300
+
+        except Exception as e:
+            if log_entry.status == UserUpdateStoryLog.STATUS_IN_PROGRESS:
+                log_entry.status = UserUpdateStoryLog.STATUS_FAILED
+                log_entry.message = str(e)
+                log_entry.save()
+
+            logger.exception(
+                "Failed to update stories from SaveAPI for user %s: %s",
+                self.username,
+                e,  # noqa: TRY401
+            )
+            raise
+
+    def update_stories_from_saveapi(self):
+        """Update user stories from SaveAPI synchronously."""
+        return self._update_stories_from_saveapi()
+
+    def update_stories_from_saveapi_async(self):
+        """Queue a background task that updates user stories from SaveAPI."""
+        from instagram.tasks import update_user_stories_from_saveapi  # noqa: PLC0415
+
+        logger.info("Queuing SaveAPI story update task for user %s", self.username)
+        return update_user_stories_from_saveapi.delay(self.uuid)
 
     def update_stories_from_api(self):
         """Update user stories from Instagram API synchronously."""
