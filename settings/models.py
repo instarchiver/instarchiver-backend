@@ -170,3 +170,49 @@ class StripeSetting(SingletonModel):
 
     class Meta:
         verbose_name = "Stripe Setting"
+
+
+class TelegramSetting(SingletonModel):
+    bot_token = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="Telegram bot token from BotFather",
+    )
+    webhook_secret = models.CharField(
+        max_length=256,
+        default="",
+        blank=True,
+        help_text=(
+            "Secret Telegram sends in the X-Telegram-Bot-Api-Secret-Token header. "
+            "Allowed characters: A-Z, a-z, 0-9, _ and -"
+        ),
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return "Telegram Settings"
+
+    class Meta:
+        verbose_name = "Telegram Setting"
+
+    def set_webhook(self, url: str) -> dict:
+        """Register url as the bot's webhook and return Telegram's JSON reply.
+
+        Raises:
+            ImproperlyConfigured: If the bot token is empty
+            requests.RequestException: If the request fails
+        """
+        from telegram_bot.utils import call_telegram_api  # noqa: PLC0415
+
+        payload: dict = {"url": url, "allowed_updates": ["message"]}
+        if self.webhook_secret:
+            payload["secret_token"] = self.webhook_secret
+
+        response = call_telegram_api("setWebhook", payload, bot_token=self.bot_token)
+        try:
+            return response.json()
+        except ValueError:
+            return {"ok": False, "description": response.text[:500]}

@@ -231,6 +231,11 @@ UNFOLD = {
                         "icon": "hub",
                         "link": "/admin/settings/openroutersetting/",
                     },
+                    {
+                        "title": "Telegram Settings",
+                        "icon": "send",
+                        "link": "/admin/settings/telegramsetting/",
+                    },
                 ],
             },
         ],

@@ -1,20 +1,25 @@
+from typing import TYPE_CHECKING
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import models
 from django.db import transaction
 from simple_history.models import HistoricalRecords
 
+if TYPE_CHECKING:
+    import requests
+
 
 class TelegramUser(models.Model):
     """A Telegram user who has talked to the bot, linked 1:1 to a Django user.
 
-    Saving a TelegramUser with no ``user`` creates a Django user for it.
-    Creating a Django user does not create a TelegramUser.
+    Saving a TelegramUser without a user creates a Django user for it.
+    The reverse doesn't happen: a new Django user gets no TelegramUser.
 
-    ``bulk_create()`` skips ``save()``, so it fails on the NOT NULL ``user``
-    column unless every row already has a user. Two first saves for the same
-    ``telegram_id`` at once raise IntegrityError. Callers should use
-    ``get_or_create(telegram_id=...)`` and retry once.
+    bulk_create() bypasses save(), so every row must already have a user or
+    the insert fails on the NOT NULL column. If two requests create the same
+    telegram_id at the same time, one of them raises IntegrityError. Use
+    get_or_create(telegram_id=...) and retry once when that happens.
     """
 
     user = models.OneToOneField(
@@ -63,3 +68,41 @@ class TelegramUser(models.Model):
         user.set_unusable_password()
         user.save()
         return user
+
+    # Bot API calls. The bot only talks in private chats, where the chat id is
+    # the user's Telegram id.
+
+    def send_message(self, text: str, reply_to_message_id: int) -> "requests.Response":
+        """Send text as a reply to one of the user's messages.
+
+        The message id is required so every bot message replies to something
+        the user sent. If that message was deleted, the text is still sent,
+        just not as a reply.
+        """
+
+        from telegram_bot.utils import call_telegram_api  # noqa: PLC0415
+
+        return call_telegram_api(
+            "sendMessage",
+            {
+                "chat_id": self.telegram_id,
+                "text": text,
+                "reply_parameters": {
+                    "message_id": reply_to_message_id,
+                    "allow_sending_without_reply": True,
+                },
+            },
+        )
+
+    def send_chat_action(self, action: str = "typing") -> "requests.Response":
+        """Show a status like "typing" in the chat.
+
+        Telegram clears it after 5 seconds or when the bot sends a message.
+        """
+
+        from telegram_bot.utils import call_telegram_api  # noqa: PLC0415
+
+        return call_telegram_api(
+            "sendChatAction",
+            {"chat_id": self.telegram_id, "action": action},
+        )

@@ -17,6 +17,8 @@ Always use the `humanizer:humanizer` skill when writing or editing prose, includ
 
 Write the text first, then run it through the humanizer before saving.
 
+Don't wrap names in double backticks (``` ``text`` ```) in docstrings and comments. Write them plainly, e.g. "the message id" or /start.
+
 ## Planning Guidelines
 
 Every plan gets an evil reviewer pass before it is presented or executed. This covers plan mode, the `agent-skills:plan` / `agent-skills:planning-and-task-breakdown` skills, specs, and any multi-step implementation plan.
@@ -156,7 +158,7 @@ Settings are selected via `DJANGO_SETTINGS_MODULE` environment variable (default
 - `settings/` - Database-backed configuration (singleton models)
 - `api_logs/` - API request logging for external calls
 - `payments/` - Stripe payment integration with its own models, views, serializers, tasks, and gateways; accessible at `/payments/`
-- `telegram_bot/` - Telegram bot data. `TelegramUser` stores a bot user's Telegram profile and links 1:1 to a Django user, which gets created automatically on first save
+- `telegram_bot/` - Telegram bot data and webhook. `TelegramUser` stores a bot user's Telegram profile and links 1:1 to a Django user, which gets created automatically on first save. The bot calls live on it too (`send_message()`, `send_chat_action()`). `send_message()` requires the id of the user's message, so every bot message is a reply. `utils.py` has `upsert_telegram_user()` and `call_telegram_api()`, which is the only code that makes HTTP calls to Telegram and masks the bot token in logs
 
 **Configuration:**
 - `config/` - Django project configuration (URLs, ASGI, WSGI, Celery)
@@ -168,6 +170,7 @@ Main URL configuration in [config/urls.py](config/urls.py):
 - `/admin/` - Django admin interface
 - `/authentication/` - Firebase auth endpoints
 - `/instagram/` - Instagram archiving endpoints
+- `/telegram/webhook/` - Telegram webhook. It checks the `X-Telegram-Bot-Api-Secret-Token` header, creates or updates the sender's `TelegramUser`, then passes the message to a command method on `TelegramWebhookView` (`handle_start()` for /start, `handle_unknown()` for anything else). To add a command, write a new method and add it to the dispatch dict in `_handle_update()`. Replies go through `_reply()`, which queues the `reply_to_message` Celery task. The webhook only handles private chats and skips duplicate `update_id`s.
 - `/health/` - Health check endpoints
 - `/docs/` - Swagger/OpenAPI documentation (drf-spectacular)
 - `/schema/` - OpenAPI schema
@@ -192,6 +195,7 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 - `CoreAPISetting` - External Core API credentials
 - `FirebaseAdminSetting` - Firebase service account JSON
 - `StripeSetting` - Stripe payment credentials
+- `TelegramSetting` - Telegram bot token and webhook secret. Register the webhook with the "Set Webhook" action on its admin page. Open the admin over HTTPS, because Telegram rejects plain HTTP webhook URLs.
 - All use `SingletonModel` from `django-solo` for single-instance configuration
 
 ### External API Integration
