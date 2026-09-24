@@ -193,7 +193,6 @@ class TelegramSettingAdmin(SingletonModelAdmin, ModelAdmin):
             args=(object_id,),
         )
         webhook_url = request.build_absolute_uri(reverse("telegram_bot:webhook"))
-        webhook_url = "https://741a-103-156-219-208.ngrok-free.app/telegram/webhook/"
 
         if not webhook_url.startswith("https://"):
             self.message_user(
