@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 from django.db import IntegrityError
 from django.db import transaction
@@ -105,4 +107,35 @@ def test_str():
     assert (
         str(TelegramUserFactory.build(username="", first_name="Budi", telegram_id=5))
         == "Budi (5)"
+    )
+
+
+@patch("telegram_bot.utils.call_telegram_api")
+def test_send_message_replies_to_message_id(mock_call):
+    telegram_user = TelegramUserFactory.build(telegram_id=555)
+
+    telegram_user.send_message("hello", reply_to_message_id=99)
+
+    mock_call.assert_called_once_with(
+        "sendMessage",
+        {
+            "chat_id": 555,
+            "text": "hello",
+            "reply_parameters": {
+                "message_id": 99,
+                "allow_sending_without_reply": True,
+            },
+        },
+    )
+
+
+@patch("telegram_bot.utils.call_telegram_api")
+def test_send_chat_action(mock_call):
+    telegram_user = TelegramUserFactory.build(telegram_id=555)
+
+    telegram_user.send_chat_action()
+
+    mock_call.assert_called_once_with(
+        "sendChatAction",
+        {"chat_id": 555, "action": "typing"},
     )
