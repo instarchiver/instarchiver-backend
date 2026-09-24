@@ -9,7 +9,9 @@ from telegram_bot.models import TelegramUser
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+# priority=0 puts replies ahead of queued instagram tasks. It has to be set
+# here: a task_routes entry loses to the default priority.
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, priority=0)
 def reply_to_message(self, telegram_user_id: int, message_id: int, text: str):
     """Reply to a user's message, showing "typing" first.
 

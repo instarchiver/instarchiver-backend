@@ -219,6 +219,7 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 - Auto-discovers tasks from all installed apps
 - Uses Django settings with `CELERY_` prefix
 - Uses `django_celery_beat.schedulers:DatabaseScheduler` — periodic tasks are managed in the database, not in code. Create/edit them via Django admin at `/admin/django_celery_beat/periodictask/`
+- Every task runs on one worker. Redis message priorities are on, 0 is the highest, and tasks default to 5. `telegram_bot` tasks pass `priority=0` to `@shared_task` so bot replies skip ahead of the instagram backlog. New telegram tasks need it too, because a `task_routes` entry loses to the default priority
 
 **Task Examples** ([instagram/tasks/](instagram/tasks/)):
 

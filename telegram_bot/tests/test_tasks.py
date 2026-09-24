@@ -94,3 +94,14 @@ class TestRetries:
         reply_to_message(telegram_user.pk, 42, "hi")
 
         mock_retry.assert_not_called()
+
+
+@patch("config.celery_app.app.amqp.send_task_message")
+def test_reply_is_published_ahead_of_other_tasks(mock_send_task_message):
+    from instagram.tasks.story import moderate_story_content  # noqa: PLC0415
+
+    reply_to_message.delay(1, 2, "hi")
+    moderate_story_content.delay("story-id")
+
+    priorities = [c.kwargs["priority"] for c in mock_send_task_message.call_args_list]
+    assert priorities == [0, 5]
