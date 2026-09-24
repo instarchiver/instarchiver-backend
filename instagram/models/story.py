@@ -106,8 +106,6 @@ class Story(InstagramModerationMixin, ViewCountMixin):
         Returns:
             Saved file name if generated, None otherwise.
         """
-        from io import BytesIO  # noqa: PLC0415
-
         from django.core.files.base import ContentFile  # noqa: PLC0415
 
         from instagram.utils import extract_video_frame  # noqa: PLC0415
@@ -116,9 +114,7 @@ class Story(InstagramModerationMixin, ViewCountMixin):
             return None
 
         with self.media.open("rb") as media_file:
-            video = BytesIO(media_file.read())
-
-        content = extract_video_frame(video)
+            content = extract_video_frame(media_file)
         if not content:
             return None
 
