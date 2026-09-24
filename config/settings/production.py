@@ -94,6 +94,11 @@ AWS_S3_ACCESS_KEY_ID = env.str("AWS_S3_ACCESS_KEY_ID", default="")
 AWS_S3_SECRET_ACCESS_KEY = env.str("AWS_S3_SECRET_ACCESS_KEY", default="")
 AWS_S3_CUSTOM_DOMAIN = env.str("AWS_S3_CUSTOM_DOMAIN", default="")
 AWS_S3_SIGNATURE_VERSION = "s3v4"
+# Files read from S3 stay in memory up to this size, then go to a temp file.
+AWS_S3_MAX_MEMORY_SIZE = env.int(
+    "AWS_S3_MAX_MEMORY_SIZE",
+    default=10 * 1024 * 1024,
+)
 
 
 # STATIC & MEDIA

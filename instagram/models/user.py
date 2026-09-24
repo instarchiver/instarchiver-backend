@@ -10,7 +10,8 @@ from simple_history.models import HistoricalRecords
 from core.utils.instagram_api import fetch_user_info_by_user_id
 from core.utils.instagram_api import fetch_user_info_by_username_v2
 from core.utils.instagram_api import fetch_user_posts_by_username
-from core.utils.instagram_api import fetch_user_stories_by_username
+from core.utils.saveapi import RETRYABLE_ERROR_CODES
+from core.utils.saveapi import SaveAPIError
 from core.utils.saveapi import fetch_user_stories as fetch_user_stories_from_saveapi
 from instagram.misc import get_user_profile_picture_upload_location
 from instagram.models.mixins import ViewCountMixin
@@ -296,92 +297,6 @@ class User(GetUserPostMixIn, ViewCountMixin):
         self.api_updated_at = timezone.now()
         self.save()
 
-    def _update_stories_from_api(self):
-        """Update user stories from Instagram API with full error handling and logging."""  # noqa: E501
-        # Import here to avoid circular imports
-        from .story import Story  # noqa: PLC0415
-        from .story import UserUpdateStoryLog  # noqa: PLC0415
-
-        # Create log entry to track this operation
-        log_entry = UserUpdateStoryLog.objects.create(
-            user=self,
-            status=UserUpdateStoryLog.STATUS_IN_PROGRESS,
-            message="Started story update from API",
-        )
-
-        try:
-            # Fetch stories from Instagram API
-            response = fetch_user_stories_by_username(self.username)
-
-            # Check for errors in the response (v2 API uses 'code' field)
-            if response.get("code") != 200:  # noqa: PLR2004
-                error_message = response.get(
-                    "message",
-                    "Unknown API error",
-                )
-                msg = (
-                    f"Error fetching stories for user {self.username}. {error_message}"
-                )
-                logger.error(msg)
-
-                # Update log entry with failure
-                log_entry.status = UserUpdateStoryLog.STATUS_FAILED
-                log_entry.message = msg
-                log_entry.save()
-
-                raise Exception(msg)  # noqa: TRY002, TRY301
-
-            # Extract stories data from v2 API response
-            stories_data = response.get("data", {}).get("data", {}).get("items", [])
-            updated_stories = []
-
-            # Process each story
-            for story_data in stories_data:
-                story_id = story_data.get("id")
-
-                # Create or update story with v2 API field names
-                story, _ = Story.objects.get_or_create(
-                    story_id=story_id,
-                    defaults={
-                        "story_id": story_id,
-                        "user": self,
-                        "thumbnail_url": story_data.get("thumbnail_url"),
-                        "media_url": story_data.get("video_url")
-                        or story_data.get("thumbnail_url"),
-                        "story_created_at": story_data.get("taken_at_date"),
-                        "raw_api_data": story_data,
-                    },
-                )
-
-                updated_stories.append(story)
-
-            # Update log entry with success
-            log_entry.status = UserUpdateStoryLog.STATUS_COMPLETED
-            log_entry.message = f"Successfully updated {len(updated_stories)} stories"
-            log_entry.save()
-
-            logger.info(
-                "Successfully updated %d stories for user %s",
-                len(updated_stories),
-                self.username,
-            )
-            return updated_stories  # noqa: TRY300
-
-        except Exception as e:
-            # Update log entry with failure if not
-            #  already updated
-            if log_entry.status == UserUpdateStoryLog.STATUS_IN_PROGRESS:
-                log_entry.status = UserUpdateStoryLog.STATUS_FAILED
-                log_entry.message = str(e)
-                log_entry.save()
-
-            logger.exception(
-                "Failed to update stories for user %s: %s",
-                self.username,
-                e,  # noqa: TRY401
-            )
-            raise
-
     def _update_stories_from_saveapi(self):
         """Update user stories from SaveAPI and record the run in UserUpdateStoryLog.
 
@@ -405,18 +320,20 @@ class User(GetUserPostMixIn, ViewCountMixin):
 
             if not response.get("success"):
                 error = response.get("error") or {}
-                msg = (
-                    f"Error fetching stories from SaveAPI for user {self.username}. "
-                    f"{error.get('code', 'UNKNOWN')}: "
-                    f"{error.get('message', 'Unknown API error')}"
+                code = error.get("code") or "UNKNOWN"
+                error_exc = SaveAPIError(
+                    code,
+                    error.get("message") or "no error message",
+                    retryable=code in RETRYABLE_ERROR_CODES,
                 )
+                msg = f"Error fetching stories for user {self.username}. {error_exc}"
                 logger.error(msg)
 
                 log_entry.status = UserUpdateStoryLog.STATUS_FAILED
                 log_entry.message = msg
                 log_entry.save()
 
-                raise Exception(msg)  # noqa: TRY002, TRY301
+                raise error_exc  # noqa: TRY301
 
             updated_stories = []
             fetched_at = timezone.now()
@@ -479,17 +396,3 @@ class User(GetUserPostMixIn, ViewCountMixin):
 
         logger.info("Queuing SaveAPI story update task for user %s", self.username)
         return update_user_stories_from_saveapi.delay(self.uuid)
-
-    def update_stories_from_api(self):
-        """Update user stories from Instagram API synchronously."""
-        return self._update_stories_from_api()
-
-    def update_stories_from_api_async(self):
-        """
-        Trigger asynchronous update of user stories from Instagram API.
-        Use this method to queue the story update as a background task.
-        """
-        from instagram.tasks import update_user_stories_from_api  # noqa: PLC0415
-
-        logger.info("Queuing story update task for user %s", self.username)
-        return update_user_stories_from_api.delay(self.uuid)

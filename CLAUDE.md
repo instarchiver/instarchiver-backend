@@ -204,8 +204,14 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 **Instagram API Utilities** ([core/utils/instagram_api.py](core/utils/instagram_api.py)):
 - `fetch_user_info_by_username_v2()` - Get user data by username
 - `fetch_user_info_by_user_id()` - Get user data by ID
-- `fetch_user_stories_by_username()` - Retrieve user stories
 - All functions use the Core API client under the hood
+
+**SaveAPI Client** ([core/utils/saveapi.py](core/utils/saveapi.py)):
+- Stories come only from SaveAPI. Posts and profiles still use the Core API
+- `fetch_user_stories()` calls `/v1/download` with the user's story URL. Each request is logged to `APIRequestLog` with the `Authorization` header masked
+- Configure it with `saveapi_url` and `saveapi_api_key` on `CoreAPISetting`
+- HTTP errors are raised as `SaveAPIError` with `code`, `status_code` and `retryable`. Story tasks retry only when `is_retryable_error()` returns True, which covers timeouts, connection errors, 429/5xx and the `RATE_LIMITED` code
+- SaveAPI returns no story IDs or timestamps, so `Story.story_id` is the SHA-1 of the media URL path and `story_created_at` is the fetch time. Video stories have no thumbnail URL; the thumbnail is cut from a frame of the downloaded video
 
 ### Background Tasks
 

@@ -16,6 +16,7 @@ from instagram.tasks import increment_story_view_count
 from instagram.tasks import moderate_story_content
 from instagram.tasks import periodic_generate_story_embeddings
 from instagram.tasks import periodic_moderate_story_content
+from instagram.tasks import story_generate_blur_data_url
 from instagram.tests.factories import StoryFactory
 
 
@@ -348,3 +349,49 @@ class TestIncrementStoryViewCount(TestCase):
 
     def test_missing_story_is_a_no_op(self):
         increment_story_view_count("does-not-exist")
+
+
+class TestStoriesWithoutThumbnailAreSkipped(TestCase):
+    """Video stories from SaveAPI have no thumbnail until a frame is extracted."""
+
+    def setUp(self):
+        Story.objects.all().delete()
+        self.story = StoryFactory(
+            thumbnail_url="",
+            blur_data_url="",
+            embedding=None,
+            moderated_at=None,
+        )
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.tasks.story_generate_blur_data_url.delay")
+    def test_blur_skips_story_without_image(self, mock_delay):
+        result = auto_generate_story_blur_data_urls.delay()
+
+        assert result.result["queued"] == 0
+        mock_delay.assert_not_called()
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.tasks.generate_story_embedding.delay")
+    def test_embedding_skips_story_without_thumbnail(self, mock_delay):
+        result = periodic_generate_story_embeddings.delay()
+
+        assert result.result["queued"] == 0
+        mock_delay.assert_not_called()
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.tasks.moderate_story_content.delay")
+    def test_moderation_skips_story_without_thumbnail(self, mock_delay):
+        result = periodic_moderate_story_content.delay()
+
+        assert result.result["queued"] == 0
+        mock_delay.assert_not_called()
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.tasks.story.generate_blur_data_url_from_image_url")
+    def test_single_blur_task_returns_without_image(self, mock_generate):
+        result = story_generate_blur_data_url.delay(self.story.story_id)
+
+        assert result.result["success"] is False
+        assert result.result["error"] == "No thumbnail"
+        mock_generate.assert_not_called()

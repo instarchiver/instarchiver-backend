@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import av
 from django.core.files.base import ContentFile
+from django.core.files.storage import InMemoryStorage
 from django.test import TestCase
 from django.test import override_settings
 from PIL import Image
@@ -78,6 +79,30 @@ class TestGenerateThumbnailFromMedia(TestCase):
         story.media.save("photo.webp", ContentFile(b"x"), save=True)
 
         assert story.generate_thumbnail_from_media() is None
+
+    def test_generates_thumbnail_from_non_disk_storage(self):
+        # S3 hands back a Python file object with no OS file behind it.
+        media_field = Story._meta.get_field("media")  # noqa: SLF001
+        with patch.object(media_field, "storage", InMemoryStorage()):
+            story = self._video_story()
+
+            saved_name = story.generate_thumbnail_from_media()
+
+        assert saved_name is not None
+        assert saved_name.endswith(".jpg")
+
+    def test_passes_storage_file_without_copying(self):
+        story = self._video_story()
+
+        with patch(
+            "instagram.utils.extract_video_frame",
+            return_value=None,
+        ) as mock_extract:
+            story.generate_thumbnail_from_media()
+
+        (file_arg,) = mock_extract.call_args.args
+        assert not isinstance(file_arg, BytesIO)
+        assert file_arg is story.media
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_task_saves_thumbnail(self):
