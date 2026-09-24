@@ -194,7 +194,6 @@ class MyViewSet(viewsets.ModelViewSet):
 from core.utils.instagram_api import (
     fetch_user_info_by_username_v2,
     fetch_user_info_by_user_id,
-    fetch_user_stories_by_username,
 )
 
 # ✅ CORRECT - Uses centralized client with automatic logging

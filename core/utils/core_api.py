@@ -56,6 +56,14 @@ def validate_settings() -> bool:
         return False
 
 
+def _redact_headers(headers) -> dict[str, Any]:
+    """Return a copy of the headers with credentials masked for logging."""
+    return {
+        key: "***" if key.lower() == "authorization" else value
+        for key, value in headers.items()
+    }
+
+
 def send_logged_request(  # noqa: PLR0913
     session: requests.Session,
     method: str,
@@ -84,7 +92,7 @@ def send_logged_request(  # noqa: PLR0913
     api_log = APIRequestLog.objects.create(
         method=method.upper(),
         url=url,
-        request_headers=dict(session.headers),
+        request_headers=_redact_headers(session.headers),
         request_params=params or {},
         request_body=data or {},
         status=APIRequestLog.STATUS_PENDING,

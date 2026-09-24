@@ -66,36 +66,6 @@ def fetch_user_info_by_user_id(user_id: str) -> dict[str, Any]:
         return data
 
 
-def fetch_user_stories_by_username(username: str) -> dict[str, Any]:
-    """Fetch Instagram user stories by username using Core API endpoint.
-
-    Args:
-        username: Instagram username to fetch stories for
-
-    Returns:
-        Dictionary containing user stories from the API response
-
-    Raises:
-        ImproperlyConfigured: If API settings are not configured
-        requests.RequestException: If the API request fails
-    """
-    endpoint = "/api/v1/instagram/v2/fetch_user_stories"
-    params = {"username": username}
-
-    logger.info("Fetching stories for username: %s", username)
-
-    try:
-        response = make_request("GET", endpoint, params=params)
-        response.raise_for_status()
-        data = response.json()
-    except Exception as e:
-        logger.exception("Failed to fetch stories for username %s: %s", username, e)  # noqa: TRY401
-        raise
-    else:
-        logger.info("Successfully fetched stories for username: %s", username)
-        return data
-
-
 def fetch_user_posts_by_username(
     username: str,
     max_id: str | None = None,

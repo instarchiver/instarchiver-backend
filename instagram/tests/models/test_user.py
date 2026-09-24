@@ -4,11 +4,11 @@ from unittest.mock import patch
 import pytest
 from django.test import TestCase
 
+from core.utils.saveapi import SaveAPIError
 from instagram.models import Story
 from instagram.models import User
 from instagram.models.story import UserUpdateStoryLog
 from instagram.tests.factories import InstagramUserFactory
-from instagram.tests.factories import StoryFactory
 
 
 class TestUserModelStr(TestCase):
@@ -318,112 +318,6 @@ class TestUserGetPostDataFromApi(TestCase):
         mock_delay.assert_called_once_with(user.uuid)
 
 
-class TestUserUpdateStoriesFromApi(TestCase):
-    """Tests for User._update_stories_from_api and related methods."""
-
-    @patch("instagram.models.user.fetch_user_stories_by_username")
-    def test_update_stories_from_api_success(self, mock_fetch):
-        """Test successful story update from API."""
-        user = InstagramUserFactory(username="storyuser")
-        mock_fetch.return_value = {
-            "code": 200,
-            "data": {
-                "data": {
-                    "items": [
-                        {
-                            "id": "story_001",
-                            "thumbnail_url": "https://example.com/thumb.jpg",
-                            "video_url": "https://example.com/video.mp4",
-                            "taken_at_date": "2024-01-01T00:00:00Z",
-                        },
-                    ],
-                },
-            },
-        }
-        updated = user._update_stories_from_api()  # noqa: SLF001
-        assert len(updated) == 1
-        assert Story.objects.filter(story_id="story_001").exists()
-
-        # Check a log entry was created with COMPLETED status
-        log = UserUpdateStoryLog.objects.filter(user=user).first()
-        assert log is not None
-        assert log.status == UserUpdateStoryLog.STATUS_COMPLETED
-
-    @patch("instagram.models.user.fetch_user_stories_by_username")
-    def test_update_stories_from_api_api_error(self, mock_fetch):
-        """Test that an API error updates log with FAILED status and raises."""
-        user = InstagramUserFactory(username="erruser")
-        mock_fetch.return_value = {
-            "code": 400,
-            "message": "Rate limited",
-        }
-        with pytest.raises(Exception, match="Rate limited"):
-            user._update_stories_from_api()  # noqa: SLF001
-
-        log = UserUpdateStoryLog.objects.filter(user=user).first()
-        assert log is not None
-        assert log.status == UserUpdateStoryLog.STATUS_FAILED
-
-    @patch("instagram.models.user.fetch_user_stories_by_username")
-    def test_update_stories_from_api_sync_wrapper(self, mock_fetch):
-        """Test that update_stories_from_api delegates to _update_stories_from_api."""
-        user = InstagramUserFactory(username="syncuser")
-        mock_fetch.return_value = {
-            "code": 200,
-            "data": {"data": {"items": []}},
-        }
-        result = user.update_stories_from_api()
-        assert isinstance(result, list)
-
-    @patch("instagram.tasks.update_user_stories_from_api.delay")
-    def test_update_stories_from_api_async(self, mock_delay):
-        """Test that update_stories_from_api_async queues a Celery task."""
-        user = InstagramUserFactory()
-        mock_result = MagicMock()
-        mock_result.id = "task-002"
-        mock_delay.return_value = mock_result
-        user.update_stories_from_api_async()
-        mock_delay.assert_called_once_with(user.uuid)
-
-    @patch("instagram.models.user.fetch_user_stories_by_username")
-    def test_update_stories_exception_sets_log_failed(self, mock_fetch):
-        """Test that an unexpected exception sets log status to FAILED."""
-        user = InstagramUserFactory(username="raiseuser")
-        # Raise an actual exception (not a bad response code) so the log is
-        # still STATUS_IN_PROGRESS when the except block runs.
-        mock_fetch.side_effect = RuntimeError("Unexpected connection error")
-        with pytest.raises(RuntimeError):
-            user._update_stories_from_api()  # noqa: SLF001
-
-        log = UserUpdateStoryLog.objects.filter(user=user).first()
-        assert log is not None
-        assert log.status == UserUpdateStoryLog.STATUS_FAILED
-        assert "Unexpected connection error" in log.message
-
-    @patch("instagram.models.user.fetch_user_stories_by_username")
-    def test_update_stories_existing_story_not_duplicated(self, mock_fetch):
-        """Test that existing stories are not duplicated on re-update."""
-        user = InstagramUserFactory(username="nodupuser")
-        StoryFactory(story_id="existing_story", user=user)
-        mock_fetch.return_value = {
-            "code": 200,
-            "data": {
-                "data": {
-                    "items": [
-                        {
-                            "id": "existing_story",
-                            "thumbnail_url": "https://example.com/t.jpg",
-                            "video_url": None,
-                            "taken_at_date": "2024-01-01T00:00:00Z",
-                        },
-                    ],
-                },
-            },
-        }
-        user._update_stories_from_api()  # noqa: SLF001
-        assert Story.objects.filter(story_id="existing_story").count() == 1
-
-
 SAVEAPI_IMAGE_URL = (
     "https://scontent.cdninstagram.com/v/t51/111_222_333_n.webp?oh=abc&oe=1"
 )
@@ -496,8 +390,11 @@ class TestUserUpdateStoriesFromSaveApi(TestCase):
             "error": {"code": "INVALID_URL", "message": "Bad link"},
         }
 
-        with pytest.raises(Exception, match="INVALID_URL: Bad link"):
+        with pytest.raises(SaveAPIError, match="INVALID_URL: Bad link") as exc_info:
             user._update_stories_from_saveapi()  # noqa: SLF001
+
+        assert exc_info.value.code == "INVALID_URL"
+        assert exc_info.value.retryable is False
 
         log = UserUpdateStoryLog.objects.filter(user=user).first()
         assert log.status == UserUpdateStoryLog.STATUS_FAILED

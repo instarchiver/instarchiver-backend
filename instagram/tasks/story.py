@@ -2,6 +2,7 @@ import logging
 
 from celery import shared_task
 from django.db.models import F
+from django.db.models import Q
 
 from instagram.models import Story
 from instagram.models.story import is_video_filename
@@ -131,6 +132,13 @@ def story_generate_blur_data_url(self, story_id: str) -> dict:
         # Generate blur data URL using utility function
         # Use thumbnail.url if thumbnail exists, otherwise use thumbnail_url
         image_url = story.thumbnail.url if story.thumbnail else story.thumbnail_url
+        if not image_url:
+            # Video stories get a thumbnail only after the media is downloaded
+            return {
+                "success": False,
+                "error": "No thumbnail",
+                "story_id": story_id,
+            }
         blur_data_url = generate_blur_data_url_from_image_url(image_url)
 
         # Save to the model
@@ -205,8 +213,10 @@ def auto_generate_story_blur_data_urls():
         dict: Summary of operations performed
     """
     try:
-        # Get all stories without blur_data_url
-        stories = Story.objects.filter(blur_data_url="")
+        # Get all stories without blur_data_url that have an image to blur
+        stories = Story.objects.filter(blur_data_url="").filter(
+            Q(thumbnail__gt="") | Q(thumbnail_url__gt=""),
+        )
         total_stories = stories.count()
 
         if total_stories == 0:
@@ -397,7 +407,7 @@ def periodic_generate_story_embeddings():
     try:
         stories = Story.objects.filter(
             embedding__isnull=True,
-            thumbnail__isnull=False,
+            thumbnail__gt="",
         )
         total_stories = stories.count()
 
@@ -502,7 +512,7 @@ def periodic_moderate_story_content():
     """
     try:
         stories = Story.objects.filter(
-            thumbnail__isnull=False,
+            thumbnail__gt="",
             moderated_at__isnull=True,
         )
         total_stories = stories.count()
