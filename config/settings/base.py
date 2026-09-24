@@ -107,6 +107,7 @@ LOCAL_APPS = [
     "instagram",
     "payments",
     "settings",
+    "telegram_bot",
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -330,6 +331,14 @@ CELERY_TASK_SEND_SENT_EVENT = True
 CELERY_WORKER_HIJACK_ROOT_LOGGER = False
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#worker-prefetch-multiplier
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# https://docs.celeryq.dev/en/stable/userguide/routing.html#redis-message-priorities
+# Leave kombu's default sep alone. Production Redis keeps queue bindings
+# stored with it, and publishing breaks if it changes.
+CELERY_BROKER_TRANSPORT_OPTIONS = {"priority_steps": list(range(10))}
+# On Redis, 0 is the highest priority and a message without one counts as 0.
+# Ordinary tasks get 5 so the telegram_bot tasks, which set priority=0,
+# are picked first.
+CELERY_TASK_DEFAULT_PRIORITY = 5
 CELERY_RESULT_BACKEND = "django-db"
 CELERY_CACHE_BACKEND = "django-cache"
 

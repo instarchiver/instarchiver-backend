@@ -178,6 +178,18 @@ UNFOLD = {
                 ],
             },
             {
+                "title": "Telegram",
+                "separator": True,
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Telegram Users",
+                        "icon": "send",
+                        "link": "/admin/telegram_bot/telegramuser/",
+                    },
+                ],
+            },
+            {
                 "title": "API Monitoring",
                 "separator": True,
                 "collapsible": True,
@@ -218,6 +230,11 @@ UNFOLD = {
                         "title": "OpenRouter Settings",
                         "icon": "hub",
                         "link": "/admin/settings/openroutersetting/",
+                    },
+                    {
+                        "title": "Telegram Settings",
+                        "icon": "send",
+                        "link": "/admin/settings/telegramsetting/",
                     },
                 ],
             },
