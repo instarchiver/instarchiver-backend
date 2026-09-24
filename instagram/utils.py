@@ -8,6 +8,10 @@ import requests
 from PIL import Image as PILImage
 from rest_framework import status
 
+from core.utils.openrouter import classify
+from instagram.constants import INSTAGRAM_URL_CATEGORIES
+from instagram.constants import INSTAGRAM_URL_QUESTION
+
 logger = logging.getLogger(__name__)
 
 
@@ -123,3 +127,12 @@ def extract_video_frame(file_obj, at_seconds: float = 1.0) -> bytes | None:
     except Exception as e:
         logger.exception("Error extracting frame from video: %s", str(e))  # noqa: TRY401
         return None
+
+
+def categorize_instagram_url(url: str) -> str:
+    """Tell whether an Instagram URL is a story, a post, or unknown."""
+    return classify(
+        state=url,
+        question=INSTAGRAM_URL_QUESTION,
+        categories=INSTAGRAM_URL_CATEGORIES,
+    )
