@@ -156,6 +156,7 @@ Settings are selected via `DJANGO_SETTINGS_MODULE` environment variable (default
 - `settings/` - Database-backed configuration (singleton models)
 - `api_logs/` - API request logging for external calls
 - `payments/` - Stripe payment integration with its own models, views, serializers, tasks, and gateways; accessible at `/payments/`
+- `telegram_bot/` - Telegram bot data. `TelegramUser` stores a bot user's Telegram profile and links 1:1 to a Django user, which gets created automatically on first save
 
 **Configuration:**
 - `config/` - Django project configuration (URLs, ASGI, WSGI, Celery)

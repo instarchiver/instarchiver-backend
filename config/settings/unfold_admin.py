@@ -178,6 +178,18 @@ UNFOLD = {
                 ],
             },
             {
+                "title": "Telegram",
+                "separator": True,
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Telegram Users",
+                        "icon": "send",
+                        "link": "/admin/telegram_bot/telegramuser/",
+                    },
+                ],
+            },
+            {
                 "title": "API Monitoring",
                 "separator": True,
                 "collapsible": True,
