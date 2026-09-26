@@ -16,6 +16,7 @@ services:
     depends_on:
       - postgres
       - redis
+      - pgbouncer
     env_file:
       - ./.envs/.production/.django
       - ./.envs/.production/.postgres
@@ -32,22 +33,22 @@ services:
     env_file:
       - ./.envs/.production/.postgres
 
-  # pgbouncer:
-  #   image: edoburu/pgbouncer:latest
-  #   restart: unless-stopped
-  #   env_file:
-  #     - ./.envs/.production/.postgres
-  #   environment:
-  #     - DB_HOST=postgres
-  #     - AUTH_TYPE=scram-sha-256
-  #     - POOL_MODE=transaction
-  #   depends_on:
-  #     - postgres
-  #   healthcheck:
-  #     test: ['CMD', 'pg_isready', '-h', 'localhost']
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 5
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    restart: unless-stopped
+    env_file:
+      - ./.envs/.production/.postgres
+    environment:
+      - DB_HOST=postgres
+      - AUTH_TYPE=scram-sha-256
+      - POOL_MODE=transaction
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-h', 'localhost']
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: docker.io/redis:6
