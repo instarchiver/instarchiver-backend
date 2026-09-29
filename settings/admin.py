@@ -11,6 +11,7 @@ from unfold.admin import ModelAdmin
 from unfold.decorators import action
 
 from core.utils import openai
+from core.utils import saveapi
 
 from .models import CoreAPISetting
 from .models import FirebaseAdminSetting
@@ -85,6 +86,67 @@ class CoreAPISettingAdmin(SingletonModelAdmin, ModelAdmin):
         ),
     )
     readonly_fields = ("created_at", "updated_at")
+
+    actions_detail = ["check_saveapi_connection"]
+
+    @action(
+        description=_("Check SaveAPI Connection"),
+        url_path="check-saveapi-connection",
+        permissions=["change"],
+    )
+    def check_saveapi_connection(self, request: HttpRequest, object_id: int):
+        redirect_url = reverse_lazy(
+            "admin:settings_coreapisetting_change",
+            args=(object_id,),
+        )
+
+        try:
+            data = saveapi.get_me()
+        except (
+            ImproperlyConfigured,
+            saveapi.SaveAPIError,
+            requests.RequestException,
+            ValueError,
+        ) as e:
+            self.message_user(
+                request,
+                _("SaveAPI connection failed: %(error)s") % {"error": e},
+                level="error",
+            )
+            return redirect(redirect_url)
+
+        if not isinstance(data, dict) or not data.get("success"):
+            self.message_user(
+                request,
+                _("SaveAPI connection failed: unexpected response %(data)s")
+                % {"data": data},
+                level="error",
+            )
+            return redirect(redirect_url)
+
+        key = data.get("key") or {}
+        plan = data.get("plan") or {}
+        credit_info = data.get("credits") or {}
+
+        message = _(
+            "SaveAPI connection is working. "
+            "Plan: %(plan)s (%(rate)s requests/min). "
+            "Credits remaining: %(credits)s. "
+            "Key: %(prefix)s (%(mode)s).",
+        ) % {
+            "plan": plan.get("name") or plan.get("code") or "unknown",
+            "rate": plan.get("rate_per_min", "?"),
+            "credits": credit_info.get("remaining", "?"),
+            "prefix": key.get("prefix") or "unknown",
+            "mode": "test" if key.get("test_mode") else "live",
+        }
+        if credit_info.get("expiring_soon"):
+            message += " " + _("Expiring soon: %(count)s.") % {
+                "count": credit_info["expiring_soon"],
+            }
+
+        self.message_user(request, message, level="success")
+        return redirect(redirect_url)
 
 
 @admin.register(FirebaseAdminSetting)

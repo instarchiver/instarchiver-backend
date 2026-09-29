@@ -161,3 +161,58 @@ class TestIsRetryableError:
     )
     def test_classification(self, exc, expected):
         assert saveapi.is_retryable_error(exc) is expected
+
+
+class TestSaveAPIGetMe(TestCase):
+    def setUp(self):
+        setting = CoreAPISetting.get_solo()
+        setting.saveapi_url = "https://api.saveapi.org/"
+        setting.saveapi_api_key = "sk_live_test"
+        setting.save()
+
+    @patch("requests.Session.request")
+    def test_get_me_calls_endpoint_and_logs(self, mock_request):
+        payload = {"success": True, "plan": {"name": "Free"}}
+        mock_request.return_value = _mock_response(json_data=payload)
+
+        result = saveapi.get_me()
+
+        assert result == payload
+        kwargs = mock_request.call_args.kwargs
+        assert kwargs["method"] == "GET"
+        assert kwargs["url"] == "https://api.saveapi.org/v1/me"
+
+        log = APIRequestLog.objects.get()
+        assert log.url == "https://api.saveapi.org/v1/me"
+        assert log.status == APIRequestLog.STATUS_SUCCESS
+        assert "sk_live_test" not in str(log.request_headers)
+
+    @patch("requests.Session.request")
+    def test_get_me_http_error_raises_saveapi_error(self, mock_request):
+        mock_request.return_value = _mock_response(
+            status_code=401,
+            json_data={"error": {"code": "INVALID_KEY", "message": "Bad key"}},
+        )
+
+        with pytest.raises(saveapi.SaveAPIError) as exc_info:
+            saveapi.get_me()
+
+        assert exc_info.value.code == "INVALID_KEY"
+        assert exc_info.value.status_code == 401  # noqa: PLR2004
+        assert exc_info.value.retryable is False
+
+    def test_get_me_missing_key_raises(self):
+        setting = CoreAPISetting.get_solo()
+        setting.saveapi_api_key = ""
+        setting.save()
+
+        with pytest.raises(ImproperlyConfigured):
+            saveapi.get_me()
+
+    def test_get_me_blank_url_raises(self):
+        setting = CoreAPISetting.get_solo()
+        setting.saveapi_url = ""
+        setting.save()
+
+        with pytest.raises(ImproperlyConfigured):
+            saveapi.get_me()

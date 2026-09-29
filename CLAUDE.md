@@ -17,9 +17,13 @@ Always use the `humanizer:humanizer` skill when writing or editing prose, includ
 
 Write the text first, then run it through the humanizer before saving.
 
+If the skill isn't installed, install it first with `/plugin marketplace add blader/humanizer` and then `/plugin install humanizer@humanizer`.
+
 Don't wrap names in double backticks (``` ``text`` ```) in docstrings and comments. Write them plainly, e.g. "the message id" or /start.
 
 ## Planning Guidelines
+
+Write every plan in Indonesian, including plan mode, specs, task breakdowns, and the revised plan you show after the evil reviewer pass. Everything that goes into the repo stays in English: code, identifiers, docstrings, comments, commit messages, PR descriptions, and documentation files.
 
 Every plan gets an evil reviewer pass before it is presented or executed. This covers plan mode, the `agent-skills:plan` / `agent-skills:planning-and-task-breakdown` skills, specs, and any multi-step implementation plan.
 

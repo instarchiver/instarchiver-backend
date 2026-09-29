@@ -113,6 +113,33 @@ def download(url: str, timeout: int = 60) -> dict[str, Any]:
     return response.json()
 
 
+def get_me(timeout: int = 15) -> dict[str, Any]:
+    """Fetch the key, plan and credit details for the configured SaveAPI key.
+
+    Args:
+        timeout: Request timeout in seconds
+
+    Returns:
+        Parsed JSON response from SaveAPI
+
+    Raises:
+        ImproperlyConfigured: If SaveAPI settings are not configured
+        SaveAPIError: If SaveAPI answers with an HTTP error status
+        requests.RequestException: If the request fails before a response
+    """
+    endpoint = f"{get_saveapi_url().rstrip('/')}/v1/me"
+    try:
+        response = send_logged_request(
+            get_saveapi_session(),
+            "GET",
+            endpoint,
+            timeout=timeout,
+        )
+    except requests.HTTPError as e:
+        raise _error_from_http_error(e) from e
+    return response.json()
+
+
 def fetch_user_stories(username: str) -> dict[str, Any]:
     """Fetch the active stories of an Instagram user through SaveAPI."""
     logger.info("Fetching stories from SaveAPI for username: %s", username)
