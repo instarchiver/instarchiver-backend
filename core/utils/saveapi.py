@@ -140,6 +140,36 @@ def get_me(timeout: int = 15) -> dict[str, Any]:
     return response.json()
 
 
+def fetch_user_profile(username: str, timeout: int = 30) -> dict[str, Any]:
+    """Fetch the public profile of an Instagram user through SaveAPI.
+
+    Args:
+        username: Instagram username to look up
+        timeout: Request timeout in seconds
+
+    Returns:
+        Parsed JSON response from SaveAPI
+
+    Raises:
+        ImproperlyConfigured: If SaveAPI settings are not configured
+        SaveAPIError: If SaveAPI answers with an HTTP error status
+        requests.RequestException: If the request fails before a response
+    """
+    logger.info("Fetching profile from SaveAPI for username: %s", username)
+    endpoint = f"{get_saveapi_url().rstrip('/')}/v1/instagram/profile"
+    try:
+        response = send_logged_request(
+            get_saveapi_session(),
+            "GET",
+            endpoint,
+            params={"username": username},
+            timeout=timeout,
+        )
+    except requests.HTTPError as e:
+        raise _error_from_http_error(e) from e
+    return response.json()
+
+
 def fetch_user_stories(username: str) -> dict[str, Any]:
     """Fetch the active stories of an Instagram user through SaveAPI."""
     logger.info("Fetching stories from SaveAPI for username: %s", username)

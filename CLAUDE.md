@@ -211,15 +211,16 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 - All requests include timing, status, headers, and error tracking
 
 **Instagram API Utilities** ([core/utils/instagram_api.py](core/utils/instagram_api.py)):
-- `fetch_user_info_by_username_v2()` - Get user data by username
-- `fetch_user_info_by_user_id()` - Get user data by ID
+- `fetch_user_posts_by_username()` - Get a page of posts by Instagram user ID
+- `fetch_post_by_id()` - Get a single post by ID
 - All functions use the Core API client under the hood
 
 **SaveAPI Client** ([core/utils/saveapi.py](core/utils/saveapi.py)):
-- Stories come only from SaveAPI. Posts and profiles still use the Core API
-- `fetch_user_stories()` calls `/v1/download` with the user's story URL. Each request is logged to `APIRequestLog` with the `Authorization` header masked
+- Stories and profiles come only from SaveAPI. Posts still use the Core API
+- `fetch_user_stories()` calls `/v1/download` with the user's story URL. `fetch_user_profile()` calls `/v1/instagram/profile?username=`. Each request is logged to `APIRequestLog` with the `Authorization` header masked
 - Configure it with `saveapi_url` and `saveapi_api_key` on `CoreAPISetting`
-- HTTP errors are raised as `SaveAPIError` with `code`, `status_code` and `retryable`. Story tasks retry only when `is_retryable_error()` returns True, which covers timeouts, connection errors, 429/5xx and the `RATE_LIMITED` code
+- Profiles can only be looked up by username. `User.update_profile_from_api()` raises `SaveAPIError` with code `ID_MISMATCH` when the returned id differs from the stored `instagram_id` (the username now belongs to another account), and `DUPLICATE_ACCOUNT` when the returned id or username is already on another row. Neither is retried. `recent_posts` and `credits` are dropped before the response is stored in `raw_api_data`
+- HTTP errors are raised as `SaveAPIError` with `code`, `status_code` and `retryable`. Story and profile tasks retry only when `is_retryable_error()` returns True, which covers timeouts, connection errors, 429/5xx and the `RATE_LIMITED` code
 - SaveAPI returns no story IDs or timestamps, so `Story.story_id` is the SHA-1 of the media URL path and `story_created_at` is the fetch time. Video stories have no thumbnail URL; the thumbnail is cut from a frame of the downloaded video
 
 ### Background Tasks

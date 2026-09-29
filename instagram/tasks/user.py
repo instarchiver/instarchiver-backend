@@ -261,7 +261,8 @@ def update_user_posts_from_api(self, user_id):
 @shared_task
 def auto_update_users_profile():
     """
-    Update all users' profiles from Instagram API for users with auto-update enabled.
+    Queue a SaveAPI profile update for every user with auto-update enabled.
+    Each queued user costs SaveAPI credits.
     Returns summary of operations performed.
     """
     try:
@@ -332,7 +333,7 @@ def auto_update_users_profile():
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def auto_update_user_profile(self, user_id):
     """
-    Update a specific user's profile from Instagram API if auto-update is enabled.
+    Update a specific user's profile from SaveAPI if auto-update is enabled.
 
     Args:
         user_id (str): UUID of the user to update
@@ -370,23 +371,7 @@ def auto_update_user_profile(self, user_id):
     except Exception as e:
         error_msg = str(e)
 
-        # Determine if this is a retryable error
-        retryable_keywords = [
-            "network",
-            "timeout",
-            "connection",
-            "502",
-            "503",
-            "504",
-            "temporary",
-            "rate limit",
-            "api error",
-        ]
-        is_retryable = any(
-            keyword in error_msg.lower() for keyword in retryable_keywords
-        )
-
-        if is_retryable and self.request.retries < self.max_retries:
+        if is_retryable_error(e) and self.request.retries < self.max_retries:
             logger.warning(
                 "Retryable error updating profile for %s (attempt %s/%s): %s",
                 user.username,

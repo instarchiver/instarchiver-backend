@@ -475,6 +475,53 @@ class TestAutoUpdateUserProfile(TestCase):
         assert result.result["success"] is False
         assert "error" in result.result
 
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.user.User.update_profile_from_api")
+    def test_auto_update_user_profile_retries_retryable_saveapi_error(
+        self,
+        mock_update_profile,
+    ):
+        """A retryable SaveAPI error is retried until max_retries runs out."""
+        user = InstagramUserFactory(
+            username="testuser",
+            allow_auto_update_profile=True,
+        )
+        mock_update_profile.side_effect = SaveAPIError(
+            "RATE_LIMITED",
+            "Too many requests",
+            status_code=429,
+            retryable=True,
+        )
+
+        result = auto_update_user_profile.delay(str(user.uuid))
+
+        assert result.result["success"] is False
+        assert "RATE_LIMITED" in result.result["error"]
+        assert mock_update_profile.call_count == 4  # noqa: PLR2004
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.user.User.update_profile_from_api")
+    def test_auto_update_user_profile_non_retryable_saveapi_error(
+        self,
+        mock_update_profile,
+    ):
+        """A non-retryable SaveAPI error fails on the first attempt."""
+        user = InstagramUserFactory(
+            username="testuser",
+            allow_auto_update_profile=True,
+        )
+        mock_update_profile.side_effect = SaveAPIError(
+            "NOT_FOUND",
+            "SaveAPI error: profile not found",
+            status_code=404,
+        )
+
+        result = auto_update_user_profile.delay(str(user.uuid))
+
+        assert result.result["success"] is False
+        assert result.result["attempts"] == 1
+        mock_update_profile.assert_called_once()
+
 
 class TestAutoUpdateUsersStory(TestCase):
     """Tests for the auto_update_users_story Celery task."""

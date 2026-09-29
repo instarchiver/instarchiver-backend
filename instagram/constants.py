@@ -17,3 +17,7 @@ INSTAGRAM_URL_QUESTION = (
     "Anything else, including profile pages, explore pages and non-Instagram URLs, "
     f"is {URL_CATEGORY_UNKNOWN}."
 )
+
+# SaveAPIError codes raised when a fetched profile clashes with stored users
+PROFILE_ID_MISMATCH = "ID_MISMATCH"
+PROFILE_DUPLICATE_ACCOUNT = "DUPLICATE_ACCOUNT"

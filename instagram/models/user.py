@@ -7,12 +7,13 @@ from django.db import models
 from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
-from core.utils.instagram_api import fetch_user_info_by_user_id
-from core.utils.instagram_api import fetch_user_info_by_username_v2
 from core.utils.instagram_api import fetch_user_posts_by_username
 from core.utils.saveapi import RETRYABLE_ERROR_CODES
 from core.utils.saveapi import SaveAPIError
+from core.utils.saveapi import fetch_user_profile
 from core.utils.saveapi import fetch_user_stories as fetch_user_stories_from_saveapi
+from instagram.constants import PROFILE_DUPLICATE_ACCOUNT
+from instagram.constants import PROFILE_ID_MISMATCH
 from instagram.misc import get_user_profile_picture_upload_location
 from instagram.models.mixins import ViewCountMixin
 
@@ -183,117 +184,84 @@ class User(GetUserPostMixIn, ViewCountMixin):
         # Call the parent delete method
         return super().delete(*args, **kwargs)
 
-    def _extract_api_data_from_username_v2(self, data):
-        """Extract API response data from fetch_user_info_by_username_v2.
-
-        The v1 API returns data in a nested structure with edge-based counts.
-        """
+    def _extract_api_data_from_saveapi(self, data):
+        """Copy profile fields from a SaveAPI profile response onto this user."""
         if not data:
             return
 
-        # v1 API uses 'id' for the Instagram ID
         instagram_id = data.get("id")
-        self.instagram_id = str(instagram_id) or self.instagram_id
+        self.instagram_id = str(instagram_id) if instagram_id else self.instagram_id
         self.username = data.get("username") or self.username
-        self.full_name = data.get("full_name", "")
-        # v1 API uses 'profile_pic_url_hd' as primary, fallback to 'profile_pic_url'
+        self.full_name = data.get("full_name") or ""
         self.original_profile_picture_url = (
             data.get("profile_pic_url_hd") or data.get("profile_pic_url") or ""
         )
-        self.biography = data.get("biography", "")
-        self.is_private = data.get("is_private", False)
-        self.is_verified = data.get("is_verified", False)
+        self.biography = data.get("biography") or ""
+        self.is_private = bool(data.get("is_private"))
+        self.is_verified = bool(data.get("is_verified"))
+        self.media_count = data.get("posts") or 0
+        self.follower_count = data.get("followers") or 0
+        self.following_count = data.get("following") or 0
 
-        # v1 API uses edge structures for counts
-        media_edge = data.get("edge_owner_to_timeline_media", {})
-        self.media_count = media_edge.get("count", 0)
+    def _check_profile_conflicts(self, data):
+        """Raise SaveAPIError if saving this profile would clash with stored data.
 
-        follower_edge = data.get("edge_followed_by", {})
-        self.follower_count = follower_edge.get("count", 0)
-
-        following_edge = data.get("edge_follow", {})
-        self.following_count = following_edge.get("count", 0)
-
-    def _extract_api_data_from_user_id(self, data):
-        """Extract API response data from fetch_user_info_by_user_id.
-
-        The v1 API returns data in a nested structure with edge-based counts,
-        same format as the username v2 API.
+        SaveAPI looks profiles up by username only. When a username now belongs
+        to a different account, the returned id won't match the stored one, and
+        saving it would overwrite the old account's record. A returned id or
+        username already used by another row would break the unique constraints.
         """
-        if not data:
-            return
+        instagram_id = str(data["id"]) if data.get("id") else None
+        username = data.get("username")
 
-        # v1 API uses 'id' for the Instagram ID
-        instagram_id = data.get("id")
-        self.instagram_id = str(instagram_id) or self.instagram_id
-        self.username = data.get("username") or self.username
-        self.full_name = data.get("full_name", "")
-        # v1 API uses 'profile_pic_url_hd' as primary, fallback to 'profile_pic_url'
-        self.original_profile_picture_url = (
-            data.get("profile_pic_url_hd") or data.get("profile_pic_url") or ""
-        )
-        self.biography = data.get("biography", "")
-        self.is_private = data.get("is_private", False)
-        self.is_verified = data.get("is_verified", False)
+        if self.instagram_id and instagram_id and instagram_id != self.instagram_id:
+            msg = (
+                f"username {self.username} now belongs to Instagram id "
+                f"{instagram_id}, not {self.instagram_id}"
+            )
+            raise SaveAPIError(PROFILE_ID_MISMATCH, msg)
 
-        # v1 API uses edge structures for counts
-        media_edge = data.get("edge_owner_to_timeline_media", {})
-        self.media_count = media_edge.get("count", 0)
-
-        follower_edge = data.get("edge_followed_by", {})
-        self.follower_count = follower_edge.get("count", 0)
-
-        following_edge = data.get("edge_follow", {})
-        self.following_count = following_edge.get("count", 0)
+        others = User.objects.exclude(pk=self.pk)
+        if instagram_id and others.filter(instagram_id=instagram_id).exists():
+            msg = f"Instagram id {instagram_id} is already stored on another user"
+            raise SaveAPIError(PROFILE_DUPLICATE_ACCOUNT, msg)
+        if (
+            username
+            and username != self.username
+            and others.filter(username=username).exists()
+        ):
+            msg = f"username {username} is already stored on another user"
+            raise SaveAPIError(PROFILE_DUPLICATE_ACCOUNT, msg)
 
     def update_profile_from_api(self):
-        """Update user profile from Instagram API using the instance's username first, then instagram_id as fallback."""  # noqa: E501
+        """Update the user profile from SaveAPI, looked up by username."""
+        response = fetch_user_profile(self.username)
 
-        # Always try username first
-        response = fetch_user_info_by_username_v2(self.username)
-        api_method = "username_v2"
+        if not response.get("success"):
+            error = response.get("error") or {}
+            code = error.get("code") or "UNKNOWN"
+            error_exc = SaveAPIError(
+                code,
+                error.get("message") or "no error message",
+                retryable=code in RETRYABLE_ERROR_CODES,
+            )
+            logger.error(
+                "Error fetching profile for user %s. %s",
+                self.username,
+                error_exc,
+            )
+            raise error_exc
 
-        # v2 API uses 'code' field for status (200 = success)
-        username_failed = response.get("data") and not response.get("data").get(
-            "status",
-        )
-        if username_failed and self.instagram_id:
-            response = fetch_user_info_by_user_id(self.instagram_id)
-            api_method = "user_id"
+        self._check_profile_conflicts(response)
 
-        # Check for errors in the response
-        if api_method == "username_v2":
-            # v1 API uses 'code' field for status
-            if response.get("data") and not response.get("data").get("status"):
-                msg = "Error fetching data for user %s. %s" % (  # noqa: UP031
-                    self.username,
-                    response.get("data").get("errorMessage", "Unknown error"),
-                )
-                logger.error(msg)
-                raise Exception(msg)  # noqa: TRY002
-            # v1 API nests user data in response['data']['data']['user']
-            data = response.get("data", {}).get("data", {}).get("user")
-        else:
-            # user_id API now uses v1 structure (same as username_v2)
-            if response.get("data") and not response.get("data").get("status"):
-                msg = "Error fetching data for user %s. %s" % (  # noqa: UP031
-                    self.username,
-                    response.get("data").get("errorMessage", "Unknown error"),
-                )
-                logger.error(msg)
-                raise Exception(msg)  # noqa: TRY002
-            # v1 API nests user data in response['data']
-            data = response.get("data")
-
-        self.raw_api_data = data
-
-        # Use appropriate extraction method based on which API was called
-        if api_method == "user_id":
-            self._extract_api_data_from_user_id(data)
-        else:
-            self._extract_api_data_from_username_v2(data)
-
-        # Update timestamp and save
+        # recent_posts holds signed URLs that change on every request, which
+        # would bloat the history table, and credits is billing data.
+        self.raw_api_data = {
+            key: value
+            for key, value in response.items()
+            if key not in {"credits", "recent_posts"}
+        }
+        self._extract_api_data_from_saveapi(response)
         self.api_updated_at = timezone.now()
         self.save()
 
