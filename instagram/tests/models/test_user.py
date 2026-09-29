@@ -42,179 +42,199 @@ class TestUserModelDelete(TestCase):
         assert User.history.filter(uuid=user.uuid).count() == 0
 
 
-class TestUserExtractApiData(TestCase):
-    """Tests for the User._extract_api_data_* methods."""
+def _saveapi_profile(**overrides):
+    data = {
+        "success": True,
+        "platform": "instagram",
+        "id": "111",
+        "username": "testuser",
+        "full_name": "Updated Name",
+        "biography": "Updated bio",
+        "followers": 5000,
+        "following": 300,
+        "posts": 100,
+        "is_private": False,
+        "is_verified": True,
+        "profile_pic_url": "https://example.com/pic.jpg",
+        "profile_pic_url_hd": "https://example.com/pic_hd.jpg",
+        "recent_posts": [{"id": "1", "shortcode": "abc"}],
+        "credits": {"spent": 3, "remaining": 242},
+    }
+    data.update(overrides)
+    return data
 
-    def test_extract_api_data_from_username_v2_basic(self):
-        """Test that _extract_api_data_from_username_v2 populates fields correctly."""
+
+class TestUserExtractApiData(TestCase):
+    """Tests for the User._extract_api_data_from_saveapi method."""
+
+    def test_extract_populates_fields(self):
+        """Every mapped SaveAPI key ends up on the matching model field."""
         user = InstagramUserFactory()
-        data = {
-            "id": "123456789",
-            "username": "newusername",
-            "full_name": "New Name",
-            "profile_pic_url_hd": "https://example.com/pic_hd.jpg",
-            "profile_pic_url": "https://example.com/pic.jpg",
-            "biography": "Test bio",
-            "is_private": True,
-            "is_verified": False,
-            "edge_owner_to_timeline_media": {"count": 50},
-            "edge_followed_by": {"count": 1000},
-            "edge_follow": {"count": 200},
-        }
-        user._extract_api_data_from_username_v2(data)  # noqa: SLF001
+        user._extract_api_data_from_saveapi(  # noqa: SLF001
+            _saveapi_profile(id="123456789", username="newusername", is_private=True),
+        )
         assert user.instagram_id == "123456789"
         assert user.username == "newusername"
-        assert user.full_name == "New Name"
+        assert user.full_name == "Updated Name"
         assert user.original_profile_picture_url == "https://example.com/pic_hd.jpg"
-        assert user.biography == "Test bio"
+        assert user.biography == "Updated bio"
         assert user.is_private is True
-        assert user.is_verified is False
-        assert user.media_count == 50  # noqa: PLR2004
-        assert user.follower_count == 1000  # noqa: PLR2004
-        assert user.following_count == 200  # noqa: PLR2004
+        assert user.is_verified is True
+        assert user.media_count == 100  # noqa: PLR2004
+        assert user.follower_count == 5000  # noqa: PLR2004
+        assert user.following_count == 300  # noqa: PLR2004
 
-    def test_extract_api_data_from_username_v2_fallback_profile_pic(self):
-        """Test that profile_pic_url is used as fallback when hd URL is absent."""
+    def test_extract_falls_back_to_standard_profile_pic(self):
+        """profile_pic_url is used when the HD URL is missing."""
         user = InstagramUserFactory()
-        data = {
-            "id": "111",
-            "username": "user",
-            "profile_pic_url": "https://example.com/pic.jpg",
-        }
-        user._extract_api_data_from_username_v2(data)  # noqa: SLF001
+        user._extract_api_data_from_saveapi(  # noqa: SLF001
+            _saveapi_profile(profile_pic_url_hd=None),
+        )
         assert user.original_profile_picture_url == "https://example.com/pic.jpg"
 
-    def test_extract_api_data_from_username_v2_none_data(self):
-        """Test that passing None data is a no-op."""
+    def test_extract_handles_null_values(self):
+        """Null values become empty strings, zeros, False or the stored id."""
+        user = InstagramUserFactory(instagram_id="555")
+        user._extract_api_data_from_saveapi(  # noqa: SLF001
+            _saveapi_profile(
+                id=None,
+                full_name=None,
+                biography=None,
+                followers=None,
+                following=None,
+                posts=None,
+                is_private=None,
+                is_verified=None,
+                profile_pic_url=None,
+                profile_pic_url_hd=None,
+            ),
+        )
+        assert user.instagram_id == "555"
+        assert user.full_name == ""
+        assert user.biography == ""
+        assert user.follower_count == 0
+        assert user.following_count == 0
+        assert user.media_count == 0
+        assert user.is_private is False
+        assert user.is_verified is False
+        assert user.original_profile_picture_url == ""
+
+    def test_extract_none_data_is_noop(self):
+        """Passing None leaves the user unchanged."""
         user = InstagramUserFactory(username="unchanged")
-        user._extract_api_data_from_username_v2(None)  # noqa: SLF001
+        user._extract_api_data_from_saveapi(None)  # noqa: SLF001
         assert user.username == "unchanged"
-
-    def test_extract_api_data_from_user_id_basic(self):
-        """Test that _extract_api_data_from_user_id populates fields correctly."""
-        user = InstagramUserFactory()
-        data = {
-            "id": "987654321",
-            "username": "byid_user",
-            "full_name": "By ID Name",
-            "profile_pic_url_hd": "https://example.com/hd.jpg",
-            "biography": "Bio by id",
-            "is_private": False,
-            "is_verified": True,
-            "edge_owner_to_timeline_media": {"count": 10},
-            "edge_followed_by": {"count": 500},
-            "edge_follow": {"count": 100},
-        }
-        user._extract_api_data_from_user_id(data)  # noqa: SLF001
-        assert user.instagram_id == "987654321"
-        assert user.username == "byid_user"
-        assert user.full_name == "By ID Name"
-        assert user.is_verified is True
-        assert user.media_count == 10  # noqa: PLR2004
-        assert user.follower_count == 500  # noqa: PLR2004
-        assert user.following_count == 100  # noqa: PLR2004
-
-    def test_extract_api_data_from_user_id_none_data(self):
-        """Test that passing None data is a no-op."""
-        user = InstagramUserFactory(username="unchanged_id")
-        user._extract_api_data_from_user_id(None)  # noqa: SLF001
-        assert user.username == "unchanged_id"
 
 
 class TestUserUpdateProfileFromApi(TestCase):
     """Tests for the User.update_profile_from_api method."""
 
-    @patch("instagram.models.user.fetch_user_info_by_username_v2")
-    def test_update_profile_from_api_success_username_v2(self, mock_fetch):
-        """Test successful profile update via username v2 API."""
+    @patch("instagram.models.user.fetch_user_profile")
+    def test_update_profile_success(self, mock_fetch):
+        """A successful response updates and saves the profile."""
         user = InstagramUserFactory(username="testuser", instagram_id="111")
-        mock_fetch.return_value = {
-            "data": {
-                "status": True,
-                "data": {
-                    "user": {
-                        "id": "111",
-                        "username": "testuser",
-                        "full_name": "Updated Name",
-                        "profile_pic_url_hd": "https://example.com/pic.jpg",
-                        "biography": "Updated bio",
-                        "is_private": False,
-                        "is_verified": True,
-                        "edge_owner_to_timeline_media": {"count": 100},
-                        "edge_followed_by": {"count": 5000},
-                        "edge_follow": {"count": 300},
-                    },
-                },
-            },
-        }
+        mock_fetch.return_value = _saveapi_profile()
+
         user.update_profile_from_api()
+
+        mock_fetch.assert_called_once_with("testuser")
         user.refresh_from_db()
         assert user.full_name == "Updated Name"
+        assert user.follower_count == 5000  # noqa: PLR2004
         assert user.api_updated_at is not None
+        assert "credits" not in user.raw_api_data
+        assert "recent_posts" not in user.raw_api_data
+        assert user.raw_api_data["id"] == "111"
 
-    @patch("instagram.models.user.fetch_user_info_by_user_id")
-    @patch("instagram.models.user.fetch_user_info_by_username_v2")
-    def test_update_profile_falls_back_to_user_id(
-        self,
-        mock_fetch_username,
-        mock_fetch_id,
-    ):
-        """Test that update_profile_from_api falls back to user_id API on failure."""
-        user = InstagramUserFactory(username="fallback_user", instagram_id="222")
-        # Username v2 returns status=False so falls back
-        mock_fetch_username.return_value = {
-            "data": {"status": False, "errorMessage": "Not found"},
-        }
-        mock_fetch_id.return_value = {
-            "data": {
-                "status": True,
-                "id": "222",
-                "username": "fallback_user",
-                "full_name": "Fallback Name",
-                "profile_pic_url_hd": "",
-                "profile_pic_url": "",
-                "biography": "",
-                "is_private": False,
-                "is_verified": False,
-                "edge_owner_to_timeline_media": {"count": 0},
-                "edge_followed_by": {"count": 0},
-                "edge_follow": {"count": 0},
-            },
-        }
+    @patch("instagram.models.user.fetch_user_profile")
+    def test_update_profile_sets_missing_instagram_id(self, mock_fetch):
+        """A user without an Instagram id gets the one SaveAPI returns."""
+        user = InstagramUserFactory(username="testuser", instagram_id=None)
+        mock_fetch.return_value = _saveapi_profile(id="4060475001")
+
         user.update_profile_from_api()
+
         user.refresh_from_db()
-        assert user.api_updated_at is not None
+        assert user.instagram_id == "4060475001"
 
-    @patch("instagram.models.user.fetch_user_info_by_user_id")
-    @patch("instagram.models.user.fetch_user_info_by_username_v2")
-    def test_update_profile_user_id_api_also_fails(
-        self,
-        mock_fetch_username,
-        mock_fetch_id,
-    ):
-        """Test error raised when user_id API also returns failure (lines 274-279)."""
-        user = InstagramUserFactory(username="dualfail_user", instagram_id="999")
-        # Username v2 fails → fallback to user_id
-        mock_fetch_username.return_value = {
-            "data": {"status": False, "errorMessage": "v2 not found"},
-        }
-        # user_id API also fails
-        mock_fetch_id.return_value = {
-            "data": {"status": False, "errorMessage": "user_id also failed"},
-        }
-        with pytest.raises(Exception, match="user_id also failed"):
-            user.update_profile_from_api()
-
-    @patch("instagram.models.user.fetch_user_info_by_username_v2")
-    def test_update_profile_raises_on_api_error(self, mock_fetch):
-        """Test that update_profile_from_api raises on API error without fallback."""
-        # User has no instagram_id so the user_id fallback is skipped
-        user = InstagramUserFactory(username="erroruser", instagram_id=None)
+    @patch("instagram.models.user.fetch_user_profile")
+    def test_update_profile_raises_when_not_successful(self, mock_fetch):
+        """success: false raises a SaveAPIError and saves nothing."""
+        user = InstagramUserFactory(username="erroruser", full_name="Old")
         mock_fetch.return_value = {
-            "data": {"status": False, "errorMessage": "User not found"},
+            "success": False,
+            "error": {"code": "NOT_FOUND", "message": "User not found"},
         }
-        with pytest.raises(Exception, match="User not found"):
+
+        with pytest.raises(SaveAPIError, match="User not found") as exc_info:
             user.update_profile_from_api()
+
+        assert exc_info.value.code == "NOT_FOUND"
+        assert exc_info.value.retryable is False
+        user.refresh_from_db()
+        assert user.full_name == "Old"
+        assert user.api_updated_at is None
+
+    @patch("instagram.models.user.fetch_user_profile")
+    def test_update_profile_rate_limited_is_retryable(self, mock_fetch):
+        """A RATE_LIMITED error in the body is marked retryable."""
+        user = InstagramUserFactory(username="testuser")
+        mock_fetch.return_value = {
+            "success": False,
+            "error": {"code": "RATE_LIMITED", "message": "Slow down"},
+        }
+
+        with pytest.raises(SaveAPIError) as exc_info:
+            user.update_profile_from_api()
+
+        assert exc_info.value.retryable is True
+
+    @patch("instagram.models.user.fetch_user_profile")
+    def test_update_profile_rejects_id_mismatch(self, mock_fetch):
+        """A username that now belongs to another account is not saved over."""
+        user = InstagramUserFactory(
+            username="testuser",
+            instagram_id="111",
+            full_name="Original Owner",
+        )
+        mock_fetch.return_value = _saveapi_profile(id="999", full_name="New Owner")
+
+        with pytest.raises(SaveAPIError) as exc_info:
+            user.update_profile_from_api()
+
+        assert exc_info.value.code == "ID_MISMATCH"
+        assert exc_info.value.retryable is False
+        user.refresh_from_db()
+        assert user.full_name == "Original Owner"
+
+    @patch("instagram.models.user.fetch_user_profile")
+    def test_update_profile_rejects_id_stored_on_another_user(self, mock_fetch):
+        """An Instagram id already stored on another row is not saved."""
+        InstagramUserFactory(username="olduser", instagram_id="111")
+        user = InstagramUserFactory(username="testuser", instagram_id=None)
+        mock_fetch.return_value = _saveapi_profile(id="111")
+
+        with pytest.raises(SaveAPIError) as exc_info:
+            user.update_profile_from_api()
+
+        assert exc_info.value.code == "DUPLICATE_ACCOUNT"
+        user.refresh_from_db()
+        assert user.instagram_id is None
+
+    @patch("instagram.models.user.fetch_user_profile")
+    def test_update_profile_rejects_username_stored_on_another_user(
+        self,
+        mock_fetch,
+    ):
+        """A returned username already stored on another row is not saved."""
+        InstagramUserFactory(username="someone", instagram_id="222")
+        user = InstagramUserFactory(username="Someone", instagram_id=None)
+        mock_fetch.return_value = _saveapi_profile(id="333", username="someone")
+
+        with pytest.raises(SaveAPIError) as exc_info:
+            user.update_profile_from_api()
+
+        assert exc_info.value.code == "DUPLICATE_ACCOUNT"
 
 
 class TestUserGetPostDataFromApi(TestCase):
