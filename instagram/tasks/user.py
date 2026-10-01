@@ -413,19 +413,23 @@ def auto_update_user_profile(self, user_id):
 
 
 @shared_task
-def auto_update_users_story():
+def auto_update_users_story(*, force=False):
     """
     Queue a SaveAPI story update for every user with auto-update enabled.
+    With force=True it queues every user and ignores allow_auto_update_stories.
     Each queued user costs SaveAPI credits.
     Returns summary of operations performed.
     """
     try:
-        # Get all users with auto-update stories enabled
-        users = User.objects.filter(allow_auto_update_stories=True)
+        users = (
+            User.objects.all()
+            if force
+            else User.objects.filter(allow_auto_update_stories=True)
+        )
         total_users = users.count()
 
         if total_users == 0:
-            logger.info("No users found with auto-update stories enabled")
+            logger.info("No users to update stories for")
             return {
                 "success": True,
                 "message": "No users to update",

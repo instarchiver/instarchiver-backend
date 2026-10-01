@@ -590,6 +590,20 @@ class TestAutoUpdateUsersStory(TestCase):
         assert mock_task_delay.call_count == 3  # noqa: PLR2004
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.tasks.user.update_user_stories_from_saveapi.delay")
+    def test_auto_update_users_story_force_ignores_filter(self, mock_task_delay):
+        """With force=True, users with auto-update disabled are queued too."""
+        InstagramUserFactory(username="user1", allow_auto_update_stories=True)
+        InstagramUserFactory(username="user2", allow_auto_update_stories=True)
+        InstagramUserFactory(username="user3", allow_auto_update_stories=False)
+        mock_task_delay.return_value = Mock(id="task-id-123")
+
+        result = auto_update_users_story.delay(force=True)
+
+        assert result.result["total"] == 3  # noqa: PLR2004
+        assert mock_task_delay.call_count == 3  # noqa: PLR2004
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_auto_update_users_story_no_users(self):
         """Test when no users have auto-update stories enabled."""
         # Create only users with auto-update disabled
