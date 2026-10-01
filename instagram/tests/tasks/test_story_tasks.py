@@ -77,32 +77,22 @@ class TestGenerateStoryEmbedding(TestCase):
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     @patch("instagram.models.story.generate_image_embedding")
-    def test_value_error_returns_failure(self, mock_generate_embedding):
-        """Test that a ValueError returns a failure result."""
+    def test_errors_fail_the_task_without_retry(self, mock_generate_embedding):
+        """API errors fail the task once; the periodic task requeues it later."""
         story = StoryFactory(thumbnail_url="")
         story.thumbnail = _make_image_file()
         story.save()
 
-        mock_generate_embedding.side_effect = ValueError("Empty input")
+        for error in (ValueError("Empty input"), Exception("openai connection error")):
+            mock_generate_embedding.reset_mock()
+            mock_generate_embedding.side_effect = error
 
-        result = generate_story_embedding.delay(story.story_id)
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "ValueError" in result.result["error"]
+            result = generate_story_embedding.delay(story.story_id)
 
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.story.generate_image_embedding")
-    def test_returns_none_embedding(self, mock_generate_embedding):
-        """Test that a None embedding result is handled gracefully."""
-        story = StoryFactory(thumbnail_url="")
-        story.thumbnail = _make_image_file()
-        story.save()
-
-        mock_generate_embedding.side_effect = Exception("Unexpected failure")
-
-        result = generate_story_embedding.delay(story.story_id)
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
+            assert isinstance(result, EagerResult)
+            assert result.failed()
+            assert result.result is error
+            mock_generate_embedding.assert_called_once()
 
 
 class TestPeriodicGenerateStoryEmbeddings(TestCase):
@@ -148,7 +138,6 @@ class TestPeriodicGenerateStoryEmbeddings(TestCase):
         assert isinstance(result, EagerResult)
         assert result.result["success"] is True
         assert result.result["errors"] >= 1
-        assert result.result["error_details"] is not None
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_stories_with_existing_embeddings_are_skipped(self):
@@ -162,70 +151,25 @@ class TestPeriodicGenerateStoryEmbeddings(TestCase):
         assert result.result["queued"] == 0
 
 
-class TestGenerateStoryEmbeddingRetryPaths(TestCase):
-    """Tests for retryable/non-retryable exception handling in story embedding task."""
+class TestPeriodicStoryTaskErrors(TestCase):
+    """DB errors in the periodic story tasks end the task in FAILURE."""
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    def test_non_retryable_exception_returns_failure(self):
-        """Test that a non-retryable exception returns failure with attempts info."""
-        story = StoryFactory(thumbnail_url="")
-        story.thumbnail = _make_image_file()
-        story.save()
-
-        with patch.object(
-            story.__class__,
-            "generate_embedding",
-            side_effect=Exception("Permanent API failure"),
-        ):
-            result = generate_story_embedding.delay(story.story_id)
-
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert result.result["attempts"] >= 1
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    def test_retryable_network_exception_exhausts_retries(self):
-        """Test that a retryable network exception exhausts retries and fails."""
-        story = StoryFactory(thumbnail_url="")
-        story.thumbnail = _make_image_file()
-        story.save()
-
-        with patch.object(
-            story.__class__,
-            "generate_embedding",
-            side_effect=Exception("openai connection error"),
-        ):
-            result = generate_story_embedding.delay(story.story_id)
-
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert result.result["attempts"] >= 1
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    def test_critical_error_in_periodic_embeddings(self):
-        """Test that DB errors in periodic_generate_story_embeddings are handled."""
+    def test_db_error_fails_periodic_tasks(self):
+        """Each periodic task ends in FAILURE when the story query breaks."""
+        tasks = (
+            periodic_generate_story_embeddings,
+            auto_generate_story_blur_data_urls,
+            periodic_moderate_story_content,
+        )
         with patch(
             "instagram.tasks.story.Story.objects.filter",
             side_effect=Exception("DB crash"),
         ):
-            result = periodic_generate_story_embeddings.delay()
-
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "Critical error" in result.result["error"]
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    def test_critical_error_in_auto_generate_blur(self):
-        """Test that DB errors in auto_generate_story_blur_data_urls are handled."""
-        with patch(
-            "instagram.tasks.story.Story.objects.filter",
-            side_effect=Exception("DB connection lost"),
-        ):
-            result = auto_generate_story_blur_data_urls.delay()
-
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "Critical error" in result.result["error"]
+            for task in tasks:
+                result = task.delay()
+                assert isinstance(result, EagerResult)
+                assert result.failed()
 
 
 class TestModerateStoryContent(TestCase):
@@ -322,19 +266,6 @@ class TestPeriodicModerateStoryContent(TestCase):
         assert isinstance(result, EagerResult)
         assert result.result["success"] is True
         assert result.result["errors"] >= 1
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    def test_critical_error(self):
-        """Test that DB errors in periodic_moderate_story_content are handled."""
-        with patch(
-            "instagram.tasks.story.Story.objects.filter",
-            side_effect=Exception("DB down"),
-        ):
-            result = periodic_moderate_story_content.delay()
-
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "Critical error" in result.result["error"]
 
 
 class TestIncrementStoryViewCount(TestCase):

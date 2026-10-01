@@ -77,24 +77,42 @@ class TestStoryGenerateBlurDataUrl(TestCase):
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     @patch("instagram.tasks.story.generate_blur_data_url_from_image_url")
-    def test_story_generate_blur_data_url_network_error_retry(
+    def test_story_generate_blur_data_url_error_fails_without_retry(
         self,
         mock_generate_blur,
     ):
-        """Test retry logic on network errors."""
-        # Create a test story
+        """An error fails the task once and leaves blur_data_url empty."""
         story = StoryFactory(blur_data_url="")
-
-        # Mock a network error
         mock_generate_blur.side_effect = Exception("Network timeout")
 
-        # Execute the task
         result = story_generate_blur_data_url.delay(story.story_id)
 
-        # Verify the task returns an error
         assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "error" in result.result
+        assert result.failed()
+        mock_generate_blur.assert_called_once()
+        story.refresh_from_db()
+        assert story.blur_data_url == ""
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.tasks.story.generate_blur_data_url_from_image_url")
+    def test_story_generate_blur_data_url_keeps_concurrent_file_update(
+        self,
+        mock_generate_blur,
+    ):
+        """A media file saved while the blur runs is not overwritten."""
+        story = StoryFactory(blur_data_url="")
+
+        def download_finishes_meanwhile(_url):
+            Story.objects.filter(pk=story.pk).update(media="stories/a.mp4")
+            return "data:image/jpeg;base64,abc"
+
+        mock_generate_blur.side_effect = download_finishes_meanwhile
+
+        story_generate_blur_data_url.delay(story.story_id)
+
+        story.refresh_from_db()
+        assert story.media.name == "stories/a.mp4"
+        assert story.blur_data_url == "data:image/jpeg;base64,abc"
 
 
 class TestAutoGenerateStoryBlurDataUrls(TestCase):
@@ -200,8 +218,6 @@ class TestAutoGenerateStoryBlurDataUrls(TestCase):
         assert result.result["total"] == 2  # noqa: PLR2004
         assert result.result["queued"] == 1
         assert result.result["errors"] == 1
-        assert result.result["error_details"] is not None
-        assert len(result.result["error_details"]) == 1
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_auto_generate_story_blur_data_urls_empty_database(self):

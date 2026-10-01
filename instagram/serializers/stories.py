@@ -22,18 +22,5 @@ class StoryListSerializer(serializers.ModelSerializer):
         ]
 
 
-class StoryDetailSerializer(serializers.ModelSerializer):
-    user = InstagramUserDetailSerializer(read_only=True)
-
-    class Meta:
-        model = Story
-        fields = [
-            "story_id",
-            "user",
-            "thumbnail",
-            "blur_data_url",
-            "media",
-            "is_flagged",
-            "created_at",
-            "story_created_at",
-        ]
+class StoryDetailSerializer(StoryListSerializer):
+    user = InstagramUserDetailSerializer(read_only=True)  # type: ignore[assignment]
