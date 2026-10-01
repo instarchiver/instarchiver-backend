@@ -11,10 +11,10 @@ from core.utils import saveapi
 from settings.models import CoreAPISetting
 
 
-def _mock_response(status_code=200, json_data=None):
+def _mock_response(status_code=200, json_data=None, headers=None):
     response = MagicMock()
     response.status_code = status_code
-    response.headers = {"Content-Type": "application/json"}
+    response.headers = {"Content-Type": "application/json", **(headers or {})}
     response.json.return_value = json_data or {}
     if status_code >= 400:  # noqa: PLR2004
         error = requests.HTTPError(f"{status_code} Client Error")
@@ -95,6 +95,19 @@ class TestSaveAPIDownload(TestCase):
         log = APIRequestLog.objects.get()
         assert log.status == APIRequestLog.STATUS_ERROR
         assert log.response_status_code == 429  # noqa: PLR2004
+
+    @patch("requests.Session.request")
+    def test_download_rate_limit_reads_retry_after(self, mock_request):
+        mock_request.return_value = _mock_response(
+            status_code=429,
+            headers={"Retry-After": "23"},
+        )
+
+        with pytest.raises(saveapi.SaveAPIError) as exc_info:
+            saveapi.download("https://www.instagram.com/stories/someone/")
+
+        assert exc_info.value.retry_after == 23  # noqa: PLR2004
+        assert exc_info.value.is_rate_limited is True
 
     @patch("requests.Session.request")
     def test_download_not_found_is_not_retryable(self, mock_request):

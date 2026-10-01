@@ -347,7 +347,7 @@ SAVEAPI_VIDEO_URL = (
 
 
 class TestUserUpdateStoriesFromSaveApi(TestCase):
-    """Tests for User._update_stories_from_saveapi and related methods."""
+    """Tests for GetUserStoryMixIn on the User model."""
 
     def _response(self, *medias):
         return {"success": True, "type": "album", "medias": list(medias)}
@@ -392,6 +392,14 @@ class TestUserUpdateStoriesFromSaveApi(TestCase):
         user._update_stories_from_saveapi()  # noqa: SLF001
 
         assert Story.objects.filter(user=user).count() == 1
+
+    def test_get_story_id_from_media_url_ignores_query_string(self):
+        """URLs that differ only in the query string get the same story id."""
+        resigned_url = SAVEAPI_IMAGE_URL.split("?", maxsplit=1)[0] + "?oh=new"
+
+        assert User._get_story_id_from_media_url(  # noqa: SLF001
+            SAVEAPI_IMAGE_URL,
+        ) == User._get_story_id_from_media_url(resigned_url)  # noqa: SLF001
 
     @patch("instagram.models.user.fetch_user_stories_from_saveapi")
     def test_skips_media_without_url(self, mock_fetch):

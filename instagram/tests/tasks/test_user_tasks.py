@@ -10,7 +10,6 @@ from django.test import override_settings
 from core.utils.saveapi import SaveAPIError
 from instagram.models import User
 from instagram.tasks import auto_update_user_profile
-from instagram.tasks import auto_update_user_story
 from instagram.tasks import auto_update_users_profile
 from instagram.tasks import auto_update_users_story
 from instagram.tasks import increment_user_view_count
@@ -203,6 +202,23 @@ class TestUpdateUserStoriesFromSaveApi(TestCase):
         assert result.result["success"] is False
         assert mock_update_stories.call_count == 6  # noqa: PLR2004
 
+    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    def test_rate_limit_requeues_after_retry_after(self, mock_update_stories):
+        """On a worker, a 429 with Retry-After queues the task again."""
+        user = InstagramUserFactory(username="saveapirequeue")
+        mock_update_stories.side_effect = SaveAPIError(
+            "RATE_LIMITED",
+            "Too many requests",
+            status_code=429,
+            retryable=True,
+            retry_after=23,
+        )
+        with patch.object(update_user_stories_from_saveapi, "apply_async") as requeue:
+            result = update_user_stories_from_saveapi.run(str(user.uuid))
+
+        assert result["rescheduled"] is True
+        requeue.assert_called_once_with(args=[str(user.uuid)], countdown=23)
+
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     @patch("instagram.models.user.User._update_stories_from_saveapi")
     def test_non_retryable_error(self, mock_update_stories):
@@ -214,6 +230,23 @@ class TestUpdateUserStoriesFromSaveApi(TestCase):
 
         assert result.result["success"] is False
         assert "INVALID_URL" in result.result["error"]
+        mock_update_stories.assert_called_once()
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    def test_not_found_error_is_not_retried(self, mock_update_stories):
+        """A 404 is not retried, even when its message mentions a timeout."""
+        user = InstagramUserFactory(username="network_daily")
+        mock_update_stories.side_effect = SaveAPIError(
+            "NOT_FOUND",
+            "network timeout 404 for https://www.instagram.com/stories/network_daily/",
+            status_code=404,
+        )
+
+        result = update_user_stories_from_saveapi.delay(str(user.uuid))
+
+        assert result.result["success"] is False
+        assert result.result["attempts"] == 1
         mock_update_stories.assert_called_once()
 
 
@@ -527,7 +560,7 @@ class TestAutoUpdateUsersStory(TestCase):
     """Tests for the auto_update_users_story Celery task."""
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.tasks.user.auto_update_user_story.delay")
+    @patch("instagram.tasks.user.update_user_stories_from_saveapi.delay")
     def test_auto_update_users_story_success(self, mock_task_delay):
         """Test successful queuing of story update tasks."""
         # Create users with auto-update stories enabled
@@ -553,7 +586,7 @@ class TestAutoUpdateUsersStory(TestCase):
         assert result.result["queued"] == 3  # noqa: PLR2004
         assert result.result["errors"] == 0
 
-        # Verify auto_update_user_story was called for each enabled user
+        # Verify a story update was queued for each enabled user
         assert mock_task_delay.call_count == 3  # noqa: PLR2004
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
@@ -572,7 +605,7 @@ class TestAutoUpdateUsersStory(TestCase):
         assert result.result["queued"] == 0
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.tasks.user.auto_update_user_story.delay")
+    @patch("instagram.tasks.user.update_user_stories_from_saveapi.delay")
     def test_auto_update_users_story_error_handling(self, mock_task_delay):
         """Test error handling when queuing tasks fails."""
         # Create users with auto-update enabled
@@ -609,107 +642,6 @@ class TestAutoUpdateUsersStory(TestCase):
         assert isinstance(result, EagerResult)
         assert result.result["success"] is True
         assert result.result["queued"] == 0
-
-
-class TestAutoUpdateUserStory(TestCase):
-    """Tests for the auto_update_user_story Celery task."""
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.user.User._update_stories_from_saveapi")
-    def test_auto_update_user_story_success(self, mock_update_stories):
-        """Test successful story update for a single user."""
-        user = InstagramUserFactory(
-            username="testuser",
-            allow_auto_update_stories=True,
-        )
-
-        # Mock the model method to return some stories
-        mock_update_stories.return_value = [{"id": "123"}, {"id": "456"}]
-
-        # Execute the task
-        result = auto_update_user_story.delay(str(user.uuid))
-
-        # Verify the task executed successfully
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is True
-        assert result.result["username"] == user.username
-        assert result.result["stories_count"] == 2  # noqa: PLR2004
-
-        # Verify the model method was called
-        mock_update_stories.assert_called_once()
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    def test_auto_update_user_story_disabled(self):
-        """Test that update is skipped when auto-update is disabled."""
-        user = InstagramUserFactory(
-            username="testuser",
-            allow_auto_update_stories=False,
-        )
-
-        # Execute the task
-        result = auto_update_user_story.delay(str(user.uuid))
-
-        # Verify the task returns an error indicating auto-update is disabled
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "not enabled" in result.result["error"].lower()
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    def test_auto_update_user_story_user_not_found(self):
-        """Test handling of non-existent user."""
-        # Execute the task with non-existent user ID
-        result = auto_update_user_story.delay(
-            "00000000-0000-0000-0000-000000000000",
-        )
-
-        # Verify the task returns an error
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "not found" in result.result["error"].lower()
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.user.User._update_stories_from_saveapi")
-    def test_auto_update_user_story_api_error(self, mock_update_stories):
-        """Test retry logic on API errors."""
-        user = InstagramUserFactory(
-            username="testuser",
-            allow_auto_update_stories=True,
-        )
-
-        mock_update_stories.side_effect = SaveAPIError(
-            "RATE_LIMITED",
-            "Too many requests",
-            status_code=429,
-            retryable=True,
-        )
-
-        result = auto_update_user_story.delay(str(user.uuid))
-
-        # Retryable errors run until max_retries (5) is used up
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "RATE_LIMITED" in result.result["error"]
-        assert mock_update_stories.call_count == 6  # noqa: PLR2004
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.user.User._update_stories_from_saveapi")
-    def test_auto_update_user_story_non_retryable_error(self, mock_update_stories):
-        """A non-retryable SaveAPI error fails on the first attempt."""
-        user = InstagramUserFactory(
-            username="network_daily",
-            allow_auto_update_stories=True,
-        )
-        mock_update_stories.side_effect = SaveAPIError(
-            "NOT_FOUND",
-            "network timeout 404 for https://www.instagram.com/stories/network_daily/",
-            status_code=404,
-        )
-
-        result = auto_update_user_story.delay(str(user.uuid))
-
-        assert result.result["success"] is False
-        assert result.result["attempts"] == 1
-        mock_update_stories.assert_called_once()
 
 
 class TestIncrementUserViewCount(TestCase):
