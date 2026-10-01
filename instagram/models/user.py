@@ -139,15 +139,21 @@ class GetUserStoryMixIn:
     """Mixin class to add story-related functionality to User model."""
 
     @staticmethod
-    def _get_story_id_from_media_url(media_url: str) -> str:
-        """Return the SHA-1 of the media URL path.
+    def _get_story_id_from_media_url(media_url):
+        """Build a story ID from the SHA-1 of the media URL path.
 
         The query string is left out because its signatures change on every
         request.
+
+        Args:
+            media_url (str): story media URL from SaveAPI
+
+        Returns:
+            str: hex SHA-1 digest of the URL path
         """
         return hashlib.sha1(urlparse(media_url).path.encode()).hexdigest()  # noqa: S324
 
-    def _update_stories_from_saveapi(self):
+    def update_stories_from_saveapi(self):
         """Update user stories from SaveAPI and record the run in UserUpdateStoryLog.
 
         SaveAPI does not return story IDs or timestamps. The story ID is a SHA-1
@@ -155,6 +161,12 @@ class GetUserStoryMixIn:
         every request), and story_created_at is the fetch time. Image items use
         the media URL as the thumbnail. Video items have no thumbnail; one is
         generated from the video after it is stored.
+
+        Returns:
+            list[Story]: stories from the response, new and existing
+
+        Raises:
+            SaveAPIError: if SaveAPI returns an error
         """
         # Import here to avoid circular imports
         from .story import Story  # noqa: PLC0415
@@ -233,12 +245,12 @@ class GetUserStoryMixIn:
             )
             raise
 
-    def update_stories_from_saveapi(self):
-        """Update user stories from SaveAPI synchronously."""
-        return self._update_stories_from_saveapi()
-
     def update_stories_from_saveapi_async(self):
-        """Queue a background task that updates user stories from SaveAPI."""
+        """Queue a background task that updates user stories from SaveAPI.
+
+        Returns:
+            AsyncResult: the queued task
+        """
         from instagram.tasks import update_user_stories_from_saveapi  # noqa: PLC0415
 
         logger.info("Queuing SaveAPI story update task for user %s", self.username)

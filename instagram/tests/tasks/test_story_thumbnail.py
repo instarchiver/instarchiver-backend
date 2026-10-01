@@ -95,7 +95,7 @@ class TestGenerateThumbnailFromMedia(TestCase):
         story = self._video_story()
 
         with patch(
-            "instagram.utils.extract_video_frame",
+            "instagram.models.story.extract_video_frame",
             return_value=None,
         ) as mock_extract:
             story.generate_thumbnail_from_media()

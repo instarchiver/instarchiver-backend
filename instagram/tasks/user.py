@@ -136,7 +136,7 @@ def update_user_stories_from_saveapi(self, user_id):
         return {"success": False, "error": "User not found"}
 
     try:
-        updated_stories = user._update_stories_from_saveapi()  # noqa: SLF001
+        updated_stories = user.update_stories_from_saveapi()
     except Exception as e:
         error_msg = str(e)
 

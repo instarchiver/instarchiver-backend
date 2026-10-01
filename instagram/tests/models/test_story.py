@@ -1,8 +1,8 @@
 from io import BytesIO
-from unittest.mock import Mock
 from unittest.mock import patch
 
 import pytest
+from django.core.files.storage import InMemoryStorage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from PIL import Image
@@ -13,106 +13,6 @@ from instagram.tests.factories import StoryFactory
 
 class TestStoryModel(TestCase):
     """Tests for the Story model methods."""
-
-    # Blur Data URL Task Tests
-    @patch("instagram.tasks.story_generate_blur_data_url.delay")
-    def test_generate_blur_data_url_task_queues_task(self, mock_task_delay):
-        """Test that generate_blur_data_url_task queues a Celery task."""
-        story = StoryFactory()
-
-        mock_result = Mock()
-        mock_result.id = "task-id-123"
-        mock_task_delay.return_value = mock_result
-
-        story.generate_blur_data_url_task()
-
-        mock_task_delay.assert_called_once()
-
-    @patch("instagram.tasks.story_generate_blur_data_url.delay")
-    def test_generate_blur_data_url_task_passes_story_id(
-        self,
-        mock_task_delay,
-    ):
-        """Test that generate_blur_data_url_task passes correct story_id."""
-        story = StoryFactory()
-
-        mock_result = Mock()
-        mock_result.id = "task-id-123"
-        mock_task_delay.return_value = mock_result
-
-        story.generate_blur_data_url_task()
-
-        mock_task_delay.assert_called_once_with(story.story_id)
-
-    @patch("instagram.tasks.story_generate_blur_data_url.delay")
-    def test_generate_blur_data_url_task_multiple_calls(
-        self,
-        mock_task_delay,
-    ):
-        """Test multiple calls queue separate tasks."""
-        story1 = StoryFactory()
-        story2 = StoryFactory()
-
-        mock_result = Mock()
-        mock_result.id = "task-id-123"
-        mock_task_delay.return_value = mock_result
-
-        story1.generate_blur_data_url_task()
-        story2.generate_blur_data_url_task()
-
-        assert mock_task_delay.call_count == 2  # noqa: PLR2004
-        mock_task_delay.assert_any_call(story1.story_id)
-        mock_task_delay.assert_any_call(story2.story_id)
-
-    # Embedding Task Tests
-    @patch("instagram.tasks.generate_story_embedding.delay")
-    def test_generate_embedding_task_queues_task(self, mock_task_delay):
-        """Test that generate_embedding_task queues a Celery task."""
-        story = StoryFactory()
-
-        mock_result = Mock()
-        mock_result.id = "task-id-789"
-        mock_task_delay.return_value = mock_result
-
-        story.generate_embedding_task()
-
-        mock_task_delay.assert_called_once()
-
-    @patch("instagram.tasks.generate_story_embedding.delay")
-    def test_generate_embedding_task_passes_story_id(
-        self,
-        mock_task_delay,
-    ):
-        """Test that generate_embedding_task passes correct story_id."""
-        story = StoryFactory()
-
-        mock_result = Mock()
-        mock_result.id = "task-id-789"
-        mock_task_delay.return_value = mock_result
-
-        story.generate_embedding_task()
-
-        mock_task_delay.assert_called_once_with(story.story_id)
-
-    @patch("instagram.tasks.generate_story_embedding.delay")
-    def test_generate_embedding_task_multiple_calls(
-        self,
-        mock_task_delay,
-    ):
-        """Test multiple calls queue separate tasks."""
-        story1 = StoryFactory()
-        story2 = StoryFactory()
-
-        mock_result = Mock()
-        mock_result.id = "task-id-789"
-        mock_task_delay.return_value = mock_result
-
-        story1.generate_embedding_task()
-        story2.generate_embedding_task()
-
-        assert mock_task_delay.call_count == 2  # noqa: PLR2004
-        mock_task_delay.assert_any_call(story1.story_id)
-        mock_task_delay.assert_any_call(story2.story_id)
 
     # Embedding Generation Tests
     def _create_test_image(self):
@@ -169,17 +69,44 @@ class TestStoryModel(TestCase):
             story.generate_embedding()
 
     @patch("instagram.models.story.generate_image_embedding")
-    def test_generate_embedding_handles_exception(self, mock_generate_embedding):
-        """Test that generate_embedding returns None on general exceptions."""
+    def test_generate_embedding_raises_api_errors(self, mock_generate_embedding):
+        """API errors reach the caller and the embedding stays empty."""
         story = StoryFactory(thumbnail_url="")
         story.thumbnail = self._create_test_image()
         story.save()
 
         mock_generate_embedding.side_effect = Exception("API Error")
 
-        result = story.generate_embedding()
+        with pytest.raises(Exception, match="API Error"):
+            story.generate_embedding()
+        story.refresh_from_db()
+        assert story.embedding is None
 
-        assert result is None
+    # Download Tests
+    @patch("instagram.models.story.download_file_from_url")
+    def test_download_thumbnail_attaches_file(self, mock_download):
+        """A downloaded thumbnail is attached and its name returned."""
+        mock_download.return_value = (b"jpeg-bytes", "jpg")
+        story = StoryFactory(thumbnail_url="https://cdn.example.com/a.jpg")
+        story.thumbnail = None
+
+        with patch.object(story.thumbnail, "storage", InMemoryStorage()):
+            saved_name = story.download_thumbnail()
+
+        assert saved_name.endswith(".jpg")
+        assert story.thumbnail.name == saved_name
+        mock_download.assert_called_once_with("https://cdn.example.com/a.jpg")
+
+    @patch("instagram.models.story.download_file_from_url")
+    def test_download_media_skips_without_url_or_on_failure(self, mock_download):
+        """Nothing is saved when the URL is empty or the download fails."""
+        story = StoryFactory(media_url="")
+        assert story.download_media() is None
+        mock_download.assert_not_called()
+
+        mock_download.return_value = (None, None)
+        story.media_url = "https://cdn.example.com/a.mp4"
+        assert story.download_media() is None
 
     # Moderate Content Tests
     def test_moderate_content_raises_error_without_thumbnail(self):

@@ -162,7 +162,7 @@ class TestUpdateUserStoriesFromSaveApi(TestCase):
     """Tests for the update_user_stories_from_saveapi Celery task."""
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    @patch("instagram.models.user.User.update_stories_from_saveapi")
     def test_success(self, mock_update_stories):
         """Test successful story update from SaveAPI."""
         user = InstagramUserFactory(username="saveapitask")
@@ -186,7 +186,7 @@ class TestUpdateUserStoriesFromSaveApi(TestCase):
         assert "not found" in result.result["error"].lower()
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    @patch("instagram.models.user.User.update_stories_from_saveapi")
     def test_rate_limit_error_is_retried(self, mock_update_stories):
         """A 429 error is retried until retries run out."""
         user = InstagramUserFactory(username="saveapiretry")
@@ -202,7 +202,7 @@ class TestUpdateUserStoriesFromSaveApi(TestCase):
         assert result.result["success"] is False
         assert mock_update_stories.call_count == 6  # noqa: PLR2004
 
-    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    @patch("instagram.models.user.User.update_stories_from_saveapi")
     def test_rate_limit_requeues_after_retry_after(self, mock_update_stories):
         """On a worker, a 429 with Retry-After queues the task again."""
         user = InstagramUserFactory(username="saveapirequeue")
@@ -220,7 +220,7 @@ class TestUpdateUserStoriesFromSaveApi(TestCase):
         requeue.assert_called_once_with(args=[str(user.uuid)], countdown=23)
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    @patch("instagram.models.user.User.update_stories_from_saveapi")
     def test_non_retryable_error(self, mock_update_stories):
         """A non-retryable error returns the failure without retrying."""
         user = InstagramUserFactory(username="saveapifail")
@@ -233,7 +233,7 @@ class TestUpdateUserStoriesFromSaveApi(TestCase):
         mock_update_stories.assert_called_once()
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.user.User._update_stories_from_saveapi")
+    @patch("instagram.models.user.User.update_stories_from_saveapi")
     def test_not_found_error_is_not_retried(self, mock_update_stories):
         """A 404 is not retried, even when its message mentions a timeout."""
         user = InstagramUserFactory(username="network_daily")

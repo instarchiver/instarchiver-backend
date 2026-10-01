@@ -1,6 +1,7 @@
 import logging
 import uuid
 
+from django.core.files.base import ContentFile
 from django.db import models
 from django.utils import timezone
 from pgvector.django import VectorField
@@ -10,14 +11,23 @@ from core.utils.openrouter import generate_image_embedding
 from instagram.misc import get_user_story_upload_location
 from instagram.models.mixins import InstagramModerationMixin
 from instagram.models.mixins import ViewCountMixin
+from instagram.utils import download_file_from_url
+from instagram.utils import extract_video_frame
 
 logger = logging.getLogger(__name__)
 
 VIDEO_EXTENSIONS = {"mp4", "mov", "webm"}
 
 
-def is_video_filename(name: str | None) -> bool:
-    """Return True if the file name has a video extension."""
+def is_video_filename(name):
+    """Check whether a file name has a video extension.
+
+    Args:
+        name (str or None): file name to check
+
+    Returns:
+        bool: True if the extension is in VIDEO_EXTENSIONS
+    """
     return bool(name) and name.rsplit(".", 1)[-1].lower() in VIDEO_EXTENSIONS
 
 
@@ -54,63 +64,54 @@ class Story(InstagramModerationMixin, ViewCountMixin):
     def __str__(self):
         return f"{self.user.username} - {self.story_id}"
 
-    def download_thumbnail(self) -> str | None:
-        """
-        Download thumbnail from thumbnail_url if the thumbnail field is empty.
+    def _download(self, field_name, url):
+        """Download url into the given file field if that field is empty.
+
+        The file is attached to the instance without saving the row.
+
+        Args:
+            field_name (str): "thumbnail" or "media"
+            url (str): source URL, may be empty
 
         Returns:
-            Saved file name if downloaded, None otherwise.
+            str or None: saved file name, or None if nothing was downloaded
         """
-        from django.core.files.base import ContentFile  # noqa: PLC0415
-
-        from instagram.utils import download_file_from_url  # noqa: PLC0415
-
-        if not (self.thumbnail_url and not self.thumbnail):
+        field = getattr(self, field_name)
+        if not url or field:
             return None
-        content, extension = download_file_from_url(self.thumbnail_url)
-        if content and extension:
-            filename = f"{uuid.uuid4()}.{extension}"
-            self.thumbnail.save(filename, ContentFile(content), save=False)
-            logger.info("Downloaded thumbnail for story %s", self.story_id)
-            return self.thumbnail.name
-        return None
-
-    def download_media(self) -> str | None:
-        """
-        Download media from media_url if the media field is empty.
-
-        Returns:
-            Saved file name if downloaded, None otherwise.
-        """
-        from django.core.files.base import ContentFile  # noqa: PLC0415
-
-        from instagram.utils import download_file_from_url  # noqa: PLC0415
-
-        if not (self.media_url and not self.media):
+        content, extension = download_file_from_url(url)
+        if not (content and extension):
             return None
-        content, extension = download_file_from_url(self.media_url)
-        if content and extension:
-            filename = f"{uuid.uuid4()}.{extension}"
-            self.media.save(filename, ContentFile(content), save=False)
-            logger.info("Downloaded media for story %s", self.story_id)
-            return self.media.name
-        return None
+        field.save(f"{uuid.uuid4()}.{extension}", ContentFile(content), save=False)
+        logger.info("Downloaded %s for story %s", field_name, self.story_id)
+        return field.name
 
-    def generate_thumbnail_from_media(self) -> str | None:
-        """
-        Build a JPEG thumbnail from a frame of the stored video media.
-
-        Used for video stories that come without a thumbnail. The video is
-        read from storage, so the Instagram CDN URL is not needed anymore.
+    def download_thumbnail(self):
+        """Download thumbnail_url into thumbnail if it is empty.
 
         Returns:
-            Saved file name if generated, None otherwise.
+            str or None: saved file name, or None if nothing was downloaded
         """
-        from django.core.files.base import ContentFile  # noqa: PLC0415
+        return self._download("thumbnail", self.thumbnail_url)
 
-        from instagram.utils import extract_video_frame  # noqa: PLC0415
+    def download_media(self):
+        """Download media_url into media if it is empty.
 
-        if self.thumbnail or not self.is_video_media():
+        Returns:
+            str or None: saved file name, or None if nothing was downloaded
+        """
+        return self._download("media", self.media_url)
+
+    def generate_thumbnail_from_media(self):
+        """Build a JPEG thumbnail from a frame of the stored video.
+
+        Video stories from SaveAPI come without a thumbnail. The frame is read
+        from storage, so it works after the Instagram CDN URL expires.
+
+        Returns:
+            str or None: saved file name, or None if nothing was generated
+        """
+        if self.thumbnail or not (self.media and is_video_filename(self.media.name)):
             return None
 
         with self.media.open("rb") as media_file:
@@ -118,93 +119,43 @@ class Story(InstagramModerationMixin, ViewCountMixin):
         if not content:
             return None
 
-        filename = f"{uuid.uuid4()}.jpg"
-        self.thumbnail.save(filename, ContentFile(content), save=False)
+        self.thumbnail.save(f"{uuid.uuid4()}.jpg", ContentFile(content), save=False)
         logger.info("Generated thumbnail from media for story %s", self.story_id)
         return self.thumbnail.name
 
-    def is_video_media(self) -> bool:
-        """Return True if the stored media file is a video."""
-        return bool(self.media) and is_video_filename(self.media.name)
-
-    def queue_thumbnail_download(self) -> None:
-        """Queue a background task to download the thumbnail file."""
-        from instagram.tasks import download_story_thumbnail_from_url  # noqa: PLC0415
-
-        download_story_thumbnail_from_url.delay(self.story_id)
-
-    def queue_media_download(self) -> None:
-        """Queue a background task to download the media file."""
-        from instagram.tasks import download_story_media_from_url  # noqa: PLC0415
-
-        download_story_media_from_url.delay(self.story_id)
-
-    def generate_blur_data_url_task(self):
-        """
-        Generates a blurred data URL from the media_url using a Celery task.
-        This method queues the blur data URL generation as a background task.
-        """
-        from instagram.tasks import story_generate_blur_data_url  # noqa: PLC0415
-
-        story_generate_blur_data_url.delay(self.story_id)
-
-    def generate_embedding_task(self):
-        """
-        Generates embedding vector for the story using a Celery task.
-        This method queues the embedding generation as a background task.
-        """
-        from instagram.tasks import generate_story_embedding  # noqa: PLC0415
-
-        generate_story_embedding.delay(self.story_id)
-
     def generate_embedding(self):
-        """
-        Generate embedding vector for the story using OpenRouter image embeddings API.
+        """Generate and save an embedding of the thumbnail through OpenRouter.
 
         Returns:
-            list[float]: Generated embedding vector, or None if generation fails
+            list[float]: the embedding vector
 
         Raises:
-            ValueError: If thumbnail is not available
-            ImproperlyConfigured: If OpenRouter settings are not configured
+            ValueError: if the story has no thumbnail
+            ImproperlyConfigured: if OpenRouter is not configured
+            requests.RequestException: if the OpenRouter call fails
         """
-        logger = logging.getLogger(__name__)
-
         if not self.thumbnail:
             msg = f"Thumbnail file does not exist for story {self.story_id}"
             raise ValueError(msg)
 
-        try:
-            embedding, token_usage = generate_image_embedding(self.thumbnail.url)
-
-            self.embedding = embedding
-            self.embedding_token_usage = token_usage
-            self.save(update_fields=["embedding", "embedding_token_usage"])
-
-            logger.info(
-                "Generated embedding for story %s (dimensions: %d, tokens: %d)",
-                self.story_id,
-                len(embedding),
-                token_usage,
-            )
-
-            return embedding  # noqa: TRY300
-
-        except ValueError:
-            logger.exception(
-                "ValueError generating embedding for story %s",
-                self.story_id,
-            )
-            raise
-        except Exception:
-            logger.exception("Failed to generate embedding for story %s", self.story_id)
-            return None
+        embedding, token_usage = generate_image_embedding(self.thumbnail.url)
+        self.embedding = embedding
+        self.embedding_token_usage = token_usage
+        self.save(update_fields=["embedding", "embedding_token_usage"])
+        logger.info(
+            "Generated embedding for story %s (dimensions: %d, tokens: %d)",
+            self.story_id,
+            len(embedding),
+            token_usage,
+        )
+        return embedding
 
     def moderate_content(self):
-        """
-        Moderate the story content using OpenAI's content moderation API.
-        """
+        """Run the thumbnail through OpenAI moderation and save the result.
 
+        Raises:
+            ValueError: if the story has no thumbnail
+        """
         if not self.thumbnail:
             msg = "Thumbnail is required for content moderation"
             raise ValueError(msg)

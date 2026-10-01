@@ -26,8 +26,21 @@ from instagram.serializers.stories import StoryListSerializer
 from instagram.tasks.story import increment_story_view_count
 
 
+def _annotated_users():
+    """Instagram users annotated with has_stories and has_history.
+
+    Returns:
+        QuerySet: InstagramUser queryset for prefetching story.user
+    """
+    return InstagramUser.objects.annotate(
+        has_stories=Exists(Story.objects.filter(user=OuterRef("pk"))),
+        has_history=Exists(
+            InstagramUser.history.model.objects.filter(uuid=OuterRef("pk")),
+        ),
+    )
+
+
 class StoryListView(ListAPIView):
-    queryset = Story.objects.all().order_by("-created_at")
     serializer_class = StoryListSerializer
     pagination_class = StoryCursorPagination
     permission_classes = [IsAuthenticatedOrReadOnly]
@@ -37,17 +50,7 @@ class StoryListView(ListAPIView):
     filterset_fields = ["user"]
 
     def get_queryset(self):
-        # Annotate users with has_stories and has_history, defer unused heavy fields
-        annotated_users = InstagramUser.objects.defer(
-            "original_profile_picture_url",
-            "raw_api_data",
-        ).annotate(
-            has_stories=Exists(Story.objects.filter(user=OuterRef("pk"))),
-            has_history=Exists(
-                InstagramUser.history.model.objects.filter(uuid=OuterRef("pk")),
-            ),
-        )
-
+        users = _annotated_users().defer("original_profile_picture_url", "raw_api_data")
         return (
             Story.objects.only(
                 "story_id",
@@ -59,14 +62,12 @@ class StoryListView(ListAPIView):
                 "created_at",
                 "story_created_at",
             )
-            .prefetch_related(
-                Prefetch("user", queryset=annotated_users),
-            )
+            .prefetch_related(Prefetch("user", queryset=users))
             .order_by("-created_at")
         )
 
     def list(self, request, *args, **kwargs):
-        """List stories with 30-second caching per unique query param combination."""
+        """List stories, cached for 30 seconds per set of query params."""
         params = dict(request.query_params)
         params_key = json.dumps(sorted(params.items()), sort_keys=True)
         md5_hash = hashlib.md5(params_key.encode(), usedforsecurity=False).hexdigest()
@@ -82,22 +83,13 @@ class StoryListView(ListAPIView):
 
 
 class StoryDetailView(RetrieveAPIView):
-    queryset = Story.objects.all()
     serializer_class = StoryDetailSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     lookup_field = "story_id"
 
     def get_queryset(self):
-        # Annotate users with has_stories and has_history
-        annotated_users = InstagramUser.objects.annotate(
-            has_stories=Exists(Story.objects.filter(user=OuterRef("pk"))),
-            has_history=Exists(
-                InstagramUser.history.model.objects.filter(uuid=OuterRef("pk")),
-            ),
-        )
-
-        return Story.objects.all().prefetch_related(
-            Prefetch("user", queryset=annotated_users),
+        return Story.objects.prefetch_related(
+            Prefetch("user", queryset=_annotated_users()),
         )
 
     def retrieve(self, request, *args, **kwargs):
@@ -109,7 +101,7 @@ class StoryDetailView(RetrieveAPIView):
 
 
 class StorySimilarView(ListAPIView):
-    """Get similar stories based on embedding similarity using L2Distance."""
+    """Stories ranked by embedding similarity (L2Distance) to a given story."""
 
     serializer_class = StoryListSerializer
     pagination_class = StorySimilarPageNumberPagination
@@ -130,36 +122,20 @@ class StorySimilarView(ListAPIView):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
-        # Get the story ID from URL parameter
         story_id = self.kwargs.get("story_id")
-
-        # Get the source story and its embedding
-        try:
-            source_story = Story.objects.get(story_id=story_id)
-        except Story.DoesNotExist:
-            return Story.objects.none()
-
-        # If source story has no embedding, return empty queryset
-        if source_story.embedding is None:
-            return Story.objects.none()
-
-        # Annotate users with has_stories and has_history
-        annotated_users = InstagramUser.objects.annotate(
-            has_stories=Exists(Story.objects.filter(user=OuterRef("pk"))),
-            has_history=Exists(
-                InstagramUser.history.model.objects.filter(uuid=OuterRef("pk")),
-            ),
+        # None when the story is missing or has no embedding yet.
+        embedding = (
+            Story.objects.filter(story_id=story_id)
+            .values_list("embedding", flat=True)
+            .first()
         )
+        if embedding is None:
+            return Story.objects.none()
 
-        # Find similar stories using L2Distance
         return (
             Story.objects.filter(embedding__isnull=False)
-            .exclude(story_id=story_id)  # Exclude the source story itself
-            .prefetch_related(
-                Prefetch("user", queryset=annotated_users),
-            )
-            .annotate(
-                similarity_score=1 - L2Distance("embedding", source_story.embedding),
-            )
+            .exclude(story_id=story_id)
+            .prefetch_related(Prefetch("user", queryset=_annotated_users()))
+            .annotate(similarity_score=1 - L2Distance("embedding", embedding))
             .order_by("-similarity_score")
         )
