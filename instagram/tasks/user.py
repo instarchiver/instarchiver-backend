@@ -117,39 +117,65 @@ def update_profile_picture_from_url(self, user_id):
         return {"success": False, "error": f"Permanent error: {e!s}"}
 
 
-def _run_saveapi_story_update(task, user) -> dict:
-    """Update a user's stories from SaveAPI, retrying the task on transient errors.
+@shared_task(bind=True, max_retries=5, default_retry_delay=60)
+def update_user_stories_from_saveapi(self, user_id):
+    """Update a user's stories from SaveAPI.
 
-    Shared by the Celery tasks below. It raises ``task.retry()`` from its own
-    ``except`` block, so callers must not wrap it in a broad ``except``.
+    Queued by the admin "Update Stories" action and by auto_update_users_story.
+
+    Args:
+        user_id (str): UUID of the user to update
+
+    Returns:
+        dict: operation result with success status and details
     """
+    try:
+        user = User.objects.get(uuid=user_id)
+    except User.DoesNotExist:
+        logger.exception("User with ID %s not found", user_id)
+        return {"success": False, "error": "User not found"}
+
     try:
         updated_stories = user._update_stories_from_saveapi()  # noqa: SLF001
     except Exception as e:
         error_msg = str(e)
 
-        if is_retryable_error(e) and task.request.retries < task.max_retries:
+        # Requeue after Retry-After. Skipped in eager mode, which ignores countdown.
+        if (
+            getattr(e, "is_rate_limited", False)
+            and e.retry_after
+            and not self.request.is_eager
+        ):
+            self.apply_async(args=[str(user.uuid)], countdown=e.retry_after)
+            logger.warning(
+                "Rate limited on %s, requeued in %ss",
+                user.username,
+                e.retry_after,
+            )
+            return {"success": False, "rescheduled": True, "username": user.username}
+
+        if is_retryable_error(e) and self.request.retries < self.max_retries:
             logger.warning(
                 "Retryable error updating SaveAPI stories for %s (attempt %s/%s): %s",
                 user.username,
-                task.request.retries + 1,
-                task.max_retries + 1,
+                self.request.retries + 1,
+                self.max_retries + 1,
                 error_msg,
             )
             # Exponential backoff
-            countdown = 60 * (2**task.request.retries)
-            raise task.retry(exc=e, countdown=countdown) from e
+            countdown = 60 * (2**self.request.retries)
+            raise self.retry(exc=e, countdown=countdown) from e
 
         logger.exception(
             "Failed to update SaveAPI stories for user %s after %s attempts",
             user.username,
-            task.request.retries + 1,
+            self.request.retries + 1,
         )
         return {
             "success": False,
             "error": error_msg,
             "username": user.username,
-            "attempts": task.request.retries + 1,
+            "attempts": self.request.retries + 1,
         }
 
     stories_count = len(updated_stories) if updated_stories else 0
@@ -164,18 +190,6 @@ def _run_saveapi_story_update(task, user) -> dict:
         "stories_count": stories_count,
         "username": user.username,
     }
-
-
-@shared_task(bind=True, max_retries=5, default_retry_delay=60)
-def update_user_stories_from_saveapi(self, user_id):
-    """Update a user's stories from SaveAPI in the background."""
-    try:
-        user = User.objects.get(uuid=user_id)
-    except User.DoesNotExist:
-        logger.exception("User with ID %s not found", user_id)
-        return {"success": False, "error": "User not found"}
-
-    return _run_saveapi_story_update(self, user)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
@@ -429,7 +443,7 @@ def auto_update_users_story():
         for user in users:
             try:
                 # Use Celery task to handle each user's story update
-                task_result = auto_update_user_story.delay(str(user.uuid))
+                task_result = update_user_stories_from_saveapi.delay(str(user.uuid))
                 task_ids.append(task_result.id)
                 queued_count += 1
                 logger.info(
@@ -469,34 +483,3 @@ def auto_update_users_story():
     except Exception as e:
         logger.exception("Critical error in auto_update_users_story")
         return {"success": False, "error": f"Critical error: {e!s}"}
-
-
-@shared_task(bind=True, max_retries=5, default_retry_delay=60)
-def auto_update_user_story(self, user_id):
-    """
-    Update a specific user's stories from SaveAPI if auto-update is enabled.
-
-    Args:
-        user_id (str): UUID of the user to update
-
-    Returns:
-        dict: Operation result with success status and details
-    """
-    try:
-        user = User.objects.get(uuid=user_id)
-    except User.DoesNotExist:
-        logger.exception("User with ID %s not found", user_id)
-        return {"success": False, "error": "User not found"}
-
-    if not user.allow_auto_update_stories:
-        logger.info(
-            "Auto-update stories disabled for user %s",
-            user.username,
-        )
-        return {
-            "success": False,
-            "error": "Auto-update stories not enabled for this user",
-            "username": user.username,
-        }
-
-    return _run_saveapi_story_update(self, user)
