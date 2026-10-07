@@ -68,7 +68,7 @@ services:
   celeryworker:
     <<: *django
     image: instarchiver_production_celeryworker
-    mem_limit: 384m
+    mem_limit: 500m
     command: /start-celeryworker
 
   celerybeat:
@@ -79,7 +79,7 @@ services:
   flower:
     <<: *django
     image: instarchiver_production_flower
-    mem_limit: 256m
+    mem_limit: 500m
     command: /start-flower
 
   nginx:
