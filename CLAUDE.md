@@ -200,7 +200,7 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 
 **Settings Models** ([settings/models.py](settings/models.py)):
 - `OpenAISetting` - OpenAI API configuration
-- `CoreAPISetting` - External Core API credentials
+- `CoreAPISetting` - SaveAPI credentials (`saveapi_url`, `saveapi_api_key`). The old Core API fields `api_url` and `api_token` are still on the model but nothing reads them
 - `FirebaseAdminSetting` - Firebase service account JSON
 - `StripeSetting` - Stripe payment credentials
 - `TelegramSetting` - Telegram bot token and webhook secret. Register the webhook with the "Set Webhook" action on its admin page. Open the admin over HTTPS, because Telegram rejects plain HTTP webhook URLs.
@@ -208,19 +208,12 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 
 ### External API Integration
 
-**Core API Client** ([core/utils/core_api.py](core/utils/core_api.py)):
-- Centralized API client for external Instagram data service
-- Automatically logs all requests to `APIRequestLog` model
-- Retrieves configuration from `CoreAPISetting` singleton
-- All requests include timing, status, headers, and error tracking
-
-**Instagram API Utilities** ([core/utils/instagram_api.py](core/utils/instagram_api.py)):
-- `fetch_user_posts_by_username()` - Get a page of posts by Instagram user ID
-- `fetch_post_by_id()` - Get a single post by ID
-- All functions use the Core API client under the hood
+**Request logging** ([core/utils/core_api.py](core/utils/core_api.py)):
+- `send_logged_request()` sends a request on a session you pass in and writes it to `APIRequestLog` with timing, status, headers and errors. The `Authorization` header is masked
+- SaveAPI uses it for every call. Nothing calls the old Core API anymore
 
 **SaveAPI Client** ([core/utils/saveapi.py](core/utils/saveapi.py)):
-- Stories and profiles come only from SaveAPI. Posts still use the Core API
+- Stories and profiles come only from SaveAPI. Posts are not fetched from any API. Existing `Post` and `PostMedia` rows stay and are still served, enriched and moderated
 - `fetch_user_stories()` calls `/v1/download` with the user's story URL. `fetch_user_profile()` calls `/v1/instagram/profile?username=`. Each request is logged to `APIRequestLog` with the `Authorization` header masked
 - Configure it with `saveapi_url` and `saveapi_api_key` on `CoreAPISetting`
 - Profiles can only be looked up by username. `User.update_profile_from_api()` raises `SaveAPIError` with code `ID_MISMATCH` when the returned id differs from the stored `instagram_id` (the username now belongs to another account), and `DUPLICATE_ACCOUNT` when the returned id or username is already on another row. Neither is retried. `recent_posts` and `credits` are dropped before the response is stored in `raw_api_data`
@@ -278,7 +271,9 @@ Moderation is triggered by `moderate_story_content()` / `moderate_post_content()
 [instagram/signals/](instagram/signals/) contains `post_save` receivers that automatically download media files when objects are created with URL fields:
 
 - `story.py` — downloads `thumbnail_url` → `thumbnail` and `media_url` → `media`
-- `post.py`, `post_media.py`, `user.py` — similar patterns for posts and profile pictures
+- `user.py` — same pattern for profile pictures
+
+`Post` and `PostMedia` have no signals.
 
 The download utility `download_file_from_url()` is in [core/utils/download.py](core/utils/download.py).
 
@@ -336,7 +331,7 @@ api_url = settings.api_url
 
 ### API Request Logging
 
-All external API calls automatically log to `APIRequestLog` via `core.utils.core_api.make_request()`. The log captures:
+All external API calls automatically log to `APIRequestLog` via `core.utils.core_api.send_logged_request()`. The log captures:
 - Request method, URL, headers, params, body
 - Response status, headers, body
 - Duration in milliseconds

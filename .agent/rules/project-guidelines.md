@@ -188,23 +188,20 @@ class MyViewSet(viewsets.ModelViewSet):
 
 ### External API Integration
 
-**Always use the Core API client for external requests:**
+**Use the SaveAPI client in `core/utils/saveapi.py` for Instagram data:**
 
 ```python
-from core.utils.instagram_api import (
-    fetch_user_info_by_username_v2,
-    fetch_user_info_by_user_id,
-)
+from core.utils.saveapi import fetch_user_profile
 
 # ✅ CORRECT - Uses centralized client with automatic logging
-user_data = fetch_user_info_by_username_v2(username)
+profile = fetch_user_profile(username)
 
 # ❌ WRONG - Don't make direct requests
 import requests
 response = requests.get(f"https://api.example.com/users/{username}")
 ```
 
-**Benefits of using Core API client:**
+**Benefits of using the SaveAPI client:**
 - Automatic request/response logging to `APIRequestLog`
 - Centralized error handling
 - Timing and performance tracking

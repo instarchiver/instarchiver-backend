@@ -7,7 +7,6 @@ from django.db import models
 from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
-from core.utils.instagram_api import fetch_user_posts_by_username
 from core.utils.saveapi import RETRYABLE_ERROR_CODES
 from core.utils.saveapi import SaveAPIError
 from core.utils.saveapi import fetch_user_profile
@@ -18,121 +17,6 @@ from instagram.misc import get_user_profile_picture_upload_location
 from instagram.models.mixins import ViewCountMixin
 
 logger = logging.getLogger(__name__)
-
-
-class GetUserPostMixIn:
-    """Mixin class to add post-related functionality to User model."""
-
-    def get_post_data_from_api(self, max_id: str | None = None):
-        """Fetch user posts from Instagram API with pagination support.
-
-        Args:
-            max_id: Optional pagination cursor for fetching next page
-
-        Returns:
-            tuple: (list of posts, next_max_id or None)
-        """
-        if not self.instagram_id:
-            msg = f"User {self.username} has no Instagram ID"
-            raise ValueError(msg)
-
-        response = fetch_user_posts_by_username(self.instagram_id, max_id=max_id)
-        data = response.get("data", {})
-        items = data.get("items", [])
-        next_max_id = data.get("next_max_id")
-        logger.info(
-            "Fetched %d posts for user %s (next_max_id: %s)",
-            len(items),
-            self.username,
-            next_max_id or "None",
-        )
-        return items, next_max_id
-
-    def _update_post_data_from_api(self, max_id: str | None = None) -> dict:
-        """Fetch and save user posts with pagination support.
-
-        This method recursively fetches all pages of posts using the max_id cursor.
-
-        Args:
-            max_id: Optional pagination cursor for fetching next page
-
-        Returns:
-            dict: Summary with total_posts, pages_fetched, and last_max_id
-        """
-        from instagram.models import Post  # noqa: PLC0415
-
-        posts, next_max_id = self.get_post_data_from_api(max_id=max_id)
-        posts_saved = 0
-
-        # Save posts from current page
-        for post in posts:
-            obj, _ = Post.objects.update_or_create(
-                id=post.get("pk"),
-                user=self,
-            )
-            obj.raw_data = post
-            obj.thumbnail_url = post.get("display_uri")
-            obj.caption = post.get("caption").get("text") if post.get("caption") else ""
-            # Convert epoch timestamp to timezone-aware datetime
-            taken_at = post.get("taken_at")
-            if taken_at:
-                obj.post_created_at = timezone.datetime.fromtimestamp(
-                    taken_at,
-                    tz=timezone.get_current_timezone(),
-                )
-            obj.save()
-            posts_saved += 1
-
-        logger.info(
-            "Saved %d posts for user %s (current page)",
-            posts_saved,
-            self.username,
-        )
-
-        # If there's a next page, recursively fetch it
-        if next_max_id:
-            logger.info(
-                "Fetching next page for user %s with max_id: %s",
-                self.username,
-                next_max_id,
-            )
-            next_result = self._update_post_data_from_api(max_id=next_max_id)
-            return {
-                "total_posts": posts_saved + next_result["total_posts"],
-                "pages_fetched": 1 + next_result["pages_fetched"],
-                "last_max_id": next_result["last_max_id"],
-            }
-
-        # No more pages, return summary
-        return {
-            "total_posts": posts_saved,
-            "pages_fetched": 1,
-            "last_max_id": max_id,
-        }
-
-    def update_post_data_from_api(self):
-        """Update user posts from Instagram API synchronously.
-
-        Note: This method is deprecated. Use update_posts_from_api_async() instead
-        for better performance with pagination support.
-        """
-        result = self._update_post_data_from_api()
-        logger.info(
-            "Updated %d posts across %d pages for user %s",
-            result["total_posts"],
-            result["pages_fetched"],
-            self.username,
-        )
-
-    def update_posts_from_api_async(self):
-        """
-        Trigger asynchronous update of user posts from Instagram API.
-        Use this method to queue the post update as a background task.
-        """
-        from instagram.tasks import update_user_posts_from_api  # noqa: PLC0415
-
-        logger.info("Queuing post update task for user %s", self.username)
-        return update_user_posts_from_api.delay(self.uuid)
 
 
 class GetUserStoryMixIn:
@@ -257,7 +141,7 @@ class GetUserStoryMixIn:
         return update_user_stories_from_saveapi.delay(self.uuid)
 
 
-class User(GetUserPostMixIn, GetUserStoryMixIn, ViewCountMixin):
+class User(GetUserStoryMixIn, ViewCountMixin):
     uuid = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     instagram_id = models.CharField(max_length=50, unique=True, blank=True, null=True)
