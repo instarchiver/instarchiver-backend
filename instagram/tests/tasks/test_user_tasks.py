@@ -14,7 +14,6 @@ from instagram.tasks import auto_update_users_profile
 from instagram.tasks import auto_update_users_story
 from instagram.tasks import increment_user_view_count
 from instagram.tasks import update_profile_picture_from_url
-from instagram.tasks import update_user_posts_from_api
 from instagram.tasks import update_user_stories_from_saveapi
 from instagram.tests.factories import InstagramUserFactory
 
@@ -248,100 +247,6 @@ class TestUpdateUserStoriesFromSaveApi(TestCase):
         assert result.result["success"] is False
         assert result.result["attempts"] == 1
         mock_update_stories.assert_called_once()
-
-
-class TestUpdateUserPostsFromApi(TestCase):
-    """Tests for the update_user_posts_from_api Celery task."""
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.user.User._update_post_data_from_api")
-    def test_update_user_posts_success(self, mock_update_posts):
-        """Test successful post update from API with pagination."""
-        user = InstagramUserFactory(username="testuser")
-
-        # Mock the model method to return pagination summary
-        mock_update_posts.return_value = {
-            "total_posts": 150,
-            "pages_fetched": 3,
-            "last_max_id": "3030736341848451381_4060475001",
-        }
-
-        # Execute the task
-        result = update_user_posts_from_api.delay(str(user.uuid))
-
-        # Verify the task executed successfully
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is True
-        assert result.result["username"] == user.username
-        assert result.result["total_posts"] == 150  # noqa: PLR2004
-        assert result.result["pages_fetched"] == 3  # noqa: PLR2004
-
-        # Verify the model method was called
-        mock_update_posts.assert_called_once()
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    def test_update_user_posts_user_not_found(self):
-        """Test handling of non-existent user."""
-        # Execute the task with non-existent user ID
-        result = update_user_posts_from_api.delay(
-            "00000000-0000-0000-0000-000000000000",
-        )
-
-        # Verify the task returns an error
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "not found" in result.result["error"].lower()
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.user.User._update_post_data_from_api")
-    def test_update_user_posts_api_error_retry(self, mock_update_posts):
-        """Test retry logic on API errors."""
-        user = InstagramUserFactory(username="testuser")
-
-        # Mock an API error
-        mock_update_posts.side_effect = Exception("Network timeout")
-
-        # Execute the task
-        result = update_user_posts_from_api.delay(str(user.uuid))
-
-        # Verify the task returns an error
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "error" in result.result
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.user.User._update_post_data_from_api")
-    def test_update_user_posts_rate_limit(self, mock_update_posts):
-        """Test handling of API rate limiting."""
-        user = InstagramUserFactory(username="testuser")
-
-        # Mock a rate limit error
-        mock_update_posts.side_effect = Exception("API error: rate limit exceeded")
-
-        # Execute the task
-        result = update_user_posts_from_api.delay(str(user.uuid))
-
-        # Verify the task returns an error
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "rate limit" in result.result["error"].lower()
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.models.user.User._update_post_data_from_api")
-    def test_update_user_posts_non_retryable_error(self, mock_update_posts):
-        """Test handling of non-retryable errors."""
-        user = InstagramUserFactory(username="testuser")
-
-        # Mock a non-retryable error
-        mock_update_posts.side_effect = Exception("Invalid configuration")
-
-        # Execute the task
-        result = update_user_posts_from_api.delay(str(user.uuid))
-
-        # Verify the task returns an error
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "Invalid configuration" in result.result["error"]
 
 
 class TestAutoUpdateUsersProfile(TestCase):

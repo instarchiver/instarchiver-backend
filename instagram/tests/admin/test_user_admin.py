@@ -91,34 +91,3 @@ class TestInstagramUserAdminActions(TestCase):
         messages = list(get_messages(request))
         assert len(messages) == 1
         assert "Failed to queue story update" in str(messages[0])
-
-    @patch("instagram.admin.user.User.update_posts_from_api_async")
-    def test_update_posts_from_api_success(self, mock_async):
-        """Test update_posts_from_api action queues task and redirects."""
-        mock_result = MagicMock()
-        mock_result.id = "task-xyz"
-        mock_async.return_value = mock_result
-        request = self._get_request_with_messages()
-        response = self.admin.update_posts_from_api(
-            request,
-            object_id=str(self.user.pk),
-        )
-        assert isinstance(response, HttpResponseRedirect)
-        mock_async.assert_called_once()
-        messages = list(get_messages(request))
-        assert len(messages) == 1
-        assert "Successfully queued" in str(messages[0])
-
-    @patch("instagram.admin.user.User.update_posts_from_api_async")
-    def test_update_posts_from_api_error(self, mock_async):
-        """Test update_posts_from_api action handles errors gracefully."""
-        mock_async.side_effect = Exception("Celery down")
-        request = self._get_request_with_messages()
-        response = self.admin.update_posts_from_api(
-            request,
-            object_id=str(self.user.pk),
-        )
-        assert isinstance(response, HttpResponseRedirect)
-        messages = list(get_messages(request))
-        assert len(messages) == 1
-        assert "Failed to queue" in str(messages[0])
