@@ -46,6 +46,7 @@ class Post(InstagramModerationMixin, ViewCountMixin):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
     embedding = VectorField(dimensions=1536, blank=True, null=True)
     embedding_token_usage = models.IntegerField(default=0)
 
