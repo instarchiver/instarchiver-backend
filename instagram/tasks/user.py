@@ -273,15 +273,19 @@ def update_user_posts_from_api(self, user_id):
 
 
 @shared_task
-def auto_update_users_profile():
+def auto_update_users_profile(*, force=False):
     """
     Queue a SaveAPI profile update for every user with auto-update enabled.
+    With force=True it queues every user and ignores allow_auto_update_profile.
     Each queued user costs SaveAPI credits.
     Returns summary of operations performed.
     """
     try:
-        # Get all users with auto-update profile enabled
-        users = User.objects.filter(allow_auto_update_profile=True)
+        users = (
+            User.objects.all()
+            if force
+            else User.objects.filter(allow_auto_update_profile=True)
+        )
         total_users = users.count()
 
         if total_users == 0:
@@ -303,7 +307,10 @@ def auto_update_users_profile():
         for user in users:
             try:
                 # Use Celery task to handle each user's profile update
-                task_result = auto_update_user_profile.delay(str(user.uuid))
+                task_result = auto_update_user_profile.delay(
+                    str(user.uuid),
+                    force=force,
+                )
                 task_ids.append(task_result.id)
                 updated_count += 1
                 logger.info(
@@ -345,12 +352,13 @@ def auto_update_users_profile():
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def auto_update_user_profile(self, user_id):
+def auto_update_user_profile(self, user_id, *, force=False):
     """
     Update a specific user's profile from SaveAPI if auto-update is enabled.
 
     Args:
         user_id (str): UUID of the user to update
+        force (bool): skip the allow_auto_update_profile check
 
     Returns:
         dict: Operation result with success status and details
@@ -361,7 +369,7 @@ def auto_update_user_profile(self, user_id):
         logger.exception("User with ID %s not found", user_id)
         return {"success": False, "error": "User not found"}
 
-    if not user.allow_auto_update_profile:
+    if not force and not user.allow_auto_update_profile:
         logger.info(
             "Auto-update profile disabled for user %s",
             user.username,
@@ -384,6 +392,24 @@ def auto_update_user_profile(self, user_id):
 
     except Exception as e:
         error_msg = str(e)
+
+        # Requeue after Retry-After. Skipped in eager mode, which ignores countdown.
+        if (
+            getattr(e, "is_rate_limited", False)
+            and e.retry_after
+            and not self.request.is_eager
+        ):
+            self.apply_async(
+                args=[str(user.uuid)],
+                kwargs={"force": force},
+                countdown=e.retry_after,
+            )
+            logger.warning(
+                "Rate limited on %s, requeued in %ss",
+                user.username,
+                e.retry_after,
+            )
+            return {"success": False, "rescheduled": True, "username": user.username}
 
         if is_retryable_error(e) and self.request.retries < self.max_retries:
             logger.warning(

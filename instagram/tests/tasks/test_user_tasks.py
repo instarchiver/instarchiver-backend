@@ -378,6 +378,21 @@ class TestAutoUpdateUsersProfile(TestCase):
         assert mock_task_delay.call_count == 3  # noqa: PLR2004
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.tasks.user.auto_update_user_profile.delay")
+    def test_auto_update_users_profile_force_ignores_filter(self, mock_task_delay):
+        """With force=True, users with auto-update disabled are queued too."""
+        InstagramUserFactory(username="user1", allow_auto_update_profile=True)
+        InstagramUserFactory(username="user2", allow_auto_update_profile=True)
+        InstagramUserFactory(username="user3", allow_auto_update_profile=False)
+        mock_task_delay.return_value = Mock(id="task-id-123")
+
+        result = auto_update_users_profile.delay(force=True)
+
+        assert result.result["total"] == 3  # noqa: PLR2004
+        assert mock_task_delay.call_count == 3  # noqa: PLR2004
+        assert all(c.kwargs["force"] is True for c in mock_task_delay.call_args_list)
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_auto_update_users_profile_no_users(self):
         """Test when no users have auto-update enabled."""
         # Create only users with auto-update disabled
@@ -474,6 +489,47 @@ class TestAutoUpdateUserProfile(TestCase):
         assert isinstance(result, EagerResult)
         assert result.result["success"] is False
         assert "not enabled" in result.result["error"].lower()
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.user.User.update_profile_from_api")
+    def test_auto_update_user_profile_force_ignores_disabled(
+        self,
+        mock_update_profile,
+    ):
+        """With force=True, the profile updates even when auto-update is off."""
+        user = InstagramUserFactory(
+            username="testuser",
+            allow_auto_update_profile=False,
+        )
+
+        result = auto_update_user_profile.delay(str(user.uuid), force=True)
+
+        assert result.result["success"] is True
+        mock_update_profile.assert_called_once()
+
+    @patch("instagram.models.user.User.update_profile_from_api")
+    def test_auto_update_user_profile_rate_limit_requeues(self, mock_update_profile):
+        """On a worker, a 429 with Retry-After queues the task again with force."""
+        user = InstagramUserFactory(
+            username="profilerequeue",
+            allow_auto_update_profile=False,
+        )
+        mock_update_profile.side_effect = SaveAPIError(
+            "RATE_LIMITED",
+            "Too many requests",
+            status_code=429,
+            retryable=True,
+            retry_after=23,
+        )
+        with patch.object(auto_update_user_profile, "apply_async") as requeue:
+            result = auto_update_user_profile.run(str(user.uuid), force=True)
+
+        assert result["rescheduled"] is True
+        requeue.assert_called_once_with(
+            args=[str(user.uuid)],
+            kwargs={"force": True},
+            countdown=23,
+        )
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_auto_update_user_profile_user_not_found(self):
