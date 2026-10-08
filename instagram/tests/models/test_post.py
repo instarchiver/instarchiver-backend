@@ -277,3 +277,27 @@ class TestPostModerateContent(TestCase):
         post.refresh_from_db()
         assert post.is_flagged is False
         assert post.moderated_at is not None
+
+
+class TestPostGenerateBlurDataUrl(TestCase):
+    """Tests for Post.generate_blur_data_url()."""
+
+    def test_raises_error_without_thumbnail(self):
+        """Test that a post without a thumbnail file raises ValueError."""
+        post = PostFactory(raw_data=None)
+
+        with pytest.raises(ValueError, match="Thumbnail is required"):
+            post.generate_blur_data_url()
+
+    @patch("instagram.models.post.generate_blur_data_url_from_image_url")
+    def test_saves_blur_data_url_from_thumbnail(self, mock_generate):
+        """Test that the blur data URL is built from the thumbnail and saved."""
+        post = PostFactory(blur_data_url="", raw_data=None)
+        post.thumbnail.save("thumb.jpg", _make_image_file(), save=True)
+        mock_generate.return_value = "data:image/jpeg;base64,abc"
+
+        post.generate_blur_data_url()
+
+        mock_generate.assert_called_once_with(post.thumbnail.url)
+        post.refresh_from_db()
+        assert post.blur_data_url == "data:image/jpeg;base64,abc"

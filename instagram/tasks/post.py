@@ -26,90 +26,43 @@ def increment_post_view_count(self, post_id: str) -> None:
     Post.objects.filter(id=post_id).update(view_count=F("view_count") + 1)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def post_generate_blur_data_url(self, post_id: str) -> dict:
-    """
-    Generate blur data URL for a post in the background.
-    Delegates business logic to the utility function.
+@shared_task
+def post_generate_blur_data_url(post_id: str) -> None:
+    """Run Post.generate_blur_data_url() in the background."""
 
-    Args:
-        post_id (str): ID of the post to generate blur data URL for
-
-    Returns:
-        dict: Operation result with success status and details
-    """
-    try:
-        post = Post.objects.get(id=post_id)
-
-        if not post.thumbnail:
-            logger.error("Post %s does not have a thumbnail", post_id)
-            return {
-                "success": False,
-                "error": "Post does not have a thumbnail",
-                "post_id": post_id,
-            }
-    except Post.DoesNotExist:
-        logger.exception("Post with ID %s not found", post_id)
-        return {"success": False, "error": "Post not found"}
-
-    try:
-        # Generate blur data URL using utility function
-        blur_data_url = generate_blur_data_url_from_image_url(post.thumbnail.url)
-
-        # Save to the model
-        post.blur_data_url = blur_data_url
-        post.save(update_fields=["blur_data_url"])
-
-        logger.info(
-            "Successfully generated blur data URL for post %s",
-            post_id,
-        )
-
-        return {  # noqa: TRY300
-            "success": True,
-            "message": "Successfully generated blur data URL",
-            "post_id": post_id,
-        }
-
-    except Exception as e:
-        error_msg = str(e)
-
-        logger.exception(
-            "Failed to generate blur data URL for post %s: %s",
-            post_id,
-            error_msg,
-        )
-        raise
+    logger.info("Generating blur data URL for post %s", post_id)
+    Post.objects.get(id=post_id).generate_blur_data_url()
 
 
 @shared_task
 def periodic_generate_post_blur_data_urls():
     """
-    Automatically generate blur data URLs for posts that don't have them yet.
-    This task is designed to be run periodically via Celery Beat.
+    Queue blur data URL generation for posts that have a thumbnail file
+    but no blur data URL yet. Run periodically via Celery Beat.
 
     Returns:
-        dict: Summary of operations performed
+        dict: success (bool) and total_queued (int)
     """
-
     logger.info("Starting periodic generation of post blur data URLs")
-    posts = Post.objects.filter(blur_data_url="")
+    post_ids = Post.objects.filter(blur_data_url="", thumbnail__gt="").values_list(
+        "id",
+        flat=True,
+    )
 
-    for post in posts:
+    total_queued = 0
+    for post_id in post_ids:
         try:
-            post_generate_blur_data_url.delay(post.id)
-            logger.info(
-                "Queued blur data URL generation for post %s",
-                post.id,
-            )
+            post_generate_blur_data_url.delay(post_id)
+            total_queued += 1
+            logger.info("Queued blur data URL generation for post %s", post_id)
         except Exception:
             logger.exception(
                 "Failed to queue blur data URL generation for post %s",
-                post.id,
+                post_id,
             )
 
     logger.info("Finished periodic generation of post blur data URLs")
-    return {"success": True, "total_queued": posts.count()}
+    return {"success": True, "total_queued": total_queued}
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)

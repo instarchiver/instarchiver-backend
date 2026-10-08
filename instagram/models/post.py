@@ -11,6 +11,7 @@ from instagram.misc import get_post_media_upload_location
 from instagram.models.mixins import InstagramModerationMixin
 from instagram.models.mixins import ViewCountMixin
 from instagram.models.user import User
+from instagram.utils import generate_blur_data_url_from_image_url
 
 
 class Post(InstagramModerationMixin, ViewCountMixin):
@@ -66,6 +67,16 @@ class Post(InstagramModerationMixin, ViewCountMixin):
         from instagram.tasks import post_generate_blur_data_url  # noqa: PLC0415
 
         post_generate_blur_data_url.delay(self.id)
+
+    def generate_blur_data_url(self):
+        """Generate the blur placeholder from the downloaded thumbnail and save it."""
+
+        if not self.thumbnail:
+            msg = "Thumbnail is required to generate a blur data URL"
+            raise ValueError(msg)
+
+        self.blur_data_url = generate_blur_data_url_from_image_url(self.thumbnail.url)
+        self.save(update_fields=["blur_data_url"])
 
     def generate_embedding_task(self):
         """

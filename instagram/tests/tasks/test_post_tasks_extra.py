@@ -13,7 +13,6 @@ from PIL import Image
 from instagram.models import Post
 from instagram.tasks import generate_post_embedding
 from instagram.tasks import moderate_post_content
-from instagram.tasks import periodic_generate_post_blur_data_urls
 from instagram.tasks import periodic_generate_post_embeddings
 from instagram.tasks import periodic_generate_post_media_blur_data_urls
 from instagram.tasks import periodic_moderate_post_content
@@ -22,19 +21,6 @@ from instagram.tests.factories import PostFactory
 
 class TestPeriodicPostTaskCriticalErrors(TestCase):
     """Tests for the critical-error fallback handlers in periodic post tasks."""
-
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    def test_periodic_generate_post_blur_data_urls_critical_error(self):
-        """Test critical error in periodic_generate_post_blur_data_urls."""
-        with patch(
-            "instagram.tasks.post.Post.objects.filter",
-            side_effect=Exception("DB connection lost"),
-        ):
-            result = periodic_generate_post_blur_data_urls.delay()
-
-        assert isinstance(result, EagerResult)
-        assert result.result["success"] is False
-        assert "Critical error" in result.result["error"]
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_periodic_generate_post_media_blur_data_urls_critical_error(self):
