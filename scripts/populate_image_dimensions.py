@@ -1,4 +1,4 @@
-"""Populate width and height fields for existing Post and PostMedia thumbnails."""  # noqa: INP001
+"""Populate width and height fields for existing Post and PostMedia thumbnails."""
 
 from io import BytesIO
 

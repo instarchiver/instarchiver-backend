@@ -1,4 +1,4 @@
-"""Populate caption field from raw_data for existing Post records."""  # noqa: INP001
+"""Populate caption field from raw_data for existing Post records."""
 
 from instagram.models import Post
 
