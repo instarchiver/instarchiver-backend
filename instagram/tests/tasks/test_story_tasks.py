@@ -4,8 +4,10 @@ from unittest.mock import patch
 
 from celery.result import EagerResult
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import TestCase
 from django.test import override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from PIL import Image
 
@@ -49,6 +51,17 @@ class TestGenerateStoryEmbedding(TestCase):
         assert isinstance(result, EagerResult)
         assert result.result["success"] is True
         assert "already exists" in result.result["message"]
+
+    def test_embedding_already_exists_does_not_load_vector(self):
+        """The existence check should not select the embedding column itself."""
+        story = StoryFactory(embedding=[0.1] * 1536)
+        with CaptureQueriesContext(connection) as ctx:
+            result = generate_story_embedding(story.story_id)
+        assert "already exists" in result["message"]
+        select = ctx.captured_queries[0]["sql"].split(" FROM ")[0]
+        # Only the IS NOT NULL check mentions the column.
+        assert select.count('"embedding"') == 1
+        assert '"embedding" IS NOT NULL' in select
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_no_thumbnail(self):

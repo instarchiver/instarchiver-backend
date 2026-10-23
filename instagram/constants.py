@@ -21,3 +21,21 @@ INSTAGRAM_URL_QUESTION = (
 # SaveAPIError codes raised when a fetched profile clashes with stored users
 PROFILE_ID_MISMATCH = "ID_MISMATCH"
 PROFILE_DUPLICATE_ACCOUNT = "DUPLICATE_ACCOUNT"
+
+# Story columns read by StoryListSerializer and StoryDetailSerializer
+STORY_FIELDS = (
+    "story_id",
+    "user_id",
+    "thumbnail",
+    "blur_data_url",
+    "media",
+    "is_flagged",
+    "created_at",
+    "story_created_at",
+)
+
+# User columns left out by InstagramUserListSerializer
+LIST_USER_DEFERRED = ("original_profile_picture_url", "raw_api_data", "view_count")
+
+# User columns left out by InstagramUserDetailSerializer
+DETAIL_USER_DEFERRED = ("raw_api_data", "view_count")

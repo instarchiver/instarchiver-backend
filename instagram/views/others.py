@@ -25,12 +25,17 @@ class ProcessInstagramDataView(CreateAPIView):
         media_url = validated_data["media"]
         created_datetime = validated_data["created_datetime"]
 
-        user, user_created = User.objects.get_or_create(
+        user, user_created = User.objects.only(
+            "uuid",
+            "username",
+            "created_at",
+            "updated_at",
+        ).get_or_create(
             username=username,
             defaults={"username": username},
         )
 
-        _, story_created = Story.objects.get_or_create(
+        _, story_created = Story.objects.only("story_id").get_or_create(
             story_id=story_id,
             defaults={
                 "user": user,
