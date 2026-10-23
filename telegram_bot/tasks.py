@@ -21,7 +21,9 @@ def reply_to_message(self, telegram_user_id: int, message_id: int, text: str):
     retry would get the same answer.
     """
     try:
-        telegram_user = TelegramUser.objects.get(pk=telegram_user_id)
+        telegram_user = TelegramUser.objects.only("id", "telegram_id").get(
+            pk=telegram_user_id,
+        )
     except TelegramUser.DoesNotExist:
         logger.warning("TelegramUser %s not found, skipping reply", telegram_user_id)
         return

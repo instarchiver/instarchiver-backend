@@ -413,3 +413,77 @@ class TestPeriodicModeratePostContent(TestCase):
         assert isinstance(result, EagerResult)
         assert result.result["success"] is False
         assert "Critical error" in result.result["error"]
+
+
+class TestPostTasksMemoryOptimizationQueries(TestCase):
+    """Verify post tasks only query needed columns and do not trigger N+1 or history bloat."""  # noqa: E501
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.post.moderate_image_content")
+    def test_moderate_post_content_does_not_create_history_or_lazy_load(
+        self,
+        mock_moderate,
+    ):
+        """moderate_post_content runs in 2 queries (SELECT + UPDATE) and adds no history row."""  # noqa: E501
+        post = PostFactory(thumbnail_url="", raw_data={"heavy": "payload"})
+        img = Image.new("RGB", (10, 10))
+        buf = BytesIO()
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+        post.thumbnail.save("thumb.jpg", buf, save=True)
+        history_before = post.history.count()
+
+        mock_moderate.return_value = {"flagged": True, "categories": {}}
+
+        with self.assertNumQueries(2):
+            result = moderate_post_content.delay(post.id)
+
+        assert result.result["success"] is True
+        assert post.history.count() == history_before
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.post.generate_image_embedding")
+    def test_generate_post_embedding_does_not_create_history_or_lazy_load(
+        self,
+        mock_embed,
+    ):
+        """generate_post_embedding runs in 2 queries (SELECT + UPDATE) and adds no history row."""  # noqa: E501
+        post = PostFactory(
+            thumbnail_url="",
+            embedding=None,
+            raw_data={"heavy": "payload"},
+        )
+        img = Image.new("RGB", (10, 10))
+        buf = BytesIO()
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+        post.thumbnail.save("thumb.jpg", buf, save=True)
+        history_before = post.history.count()
+
+        mock_embed.return_value = ([0.1] * 1536, 42)
+
+        with self.assertNumQueries(2):
+            result = generate_post_embedding.delay(post.id)
+
+        assert result.result["success"] is True
+        assert post.history.count() == history_before
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.tasks.post.requests.get")
+    def test_download_post_media_from_url_uses_select_related_without_n_plus_1(
+        self,
+        mock_get,
+    ):
+        """Downloading PostMedia joins post__user in 1 SELECT + 1 UPDATE query."""
+        post_media = PostMediaFactory(media_url="https://example.com/clip.mp4")
+
+        mock_response = MagicMock()
+        mock_response.content = b"video-bytes"
+        mock_response.headers = {"content-type": "video/mp4"}
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        with self.assertNumQueries(2):
+            result = download_post_media_from_url.delay(post_media.id)
+
+        assert result.result["success"] is True

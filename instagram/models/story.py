@@ -141,7 +141,10 @@ class Story(InstagramModerationMixin, ViewCountMixin):
         embedding, token_usage = generate_image_embedding(self.thumbnail.url)
         self.embedding = embedding
         self.embedding_token_usage = token_usage
-        self.save(update_fields=["embedding", "embedding_token_usage"])
+        Story.objects.filter(pk=self.pk).update(
+            embedding=embedding,
+            embedding_token_usage=token_usage,
+        )
         logger.info(
             "Generated embedding for story %s (dimensions: %d, tokens: %d)",
             self.story_id,
@@ -164,7 +167,11 @@ class Story(InstagramModerationMixin, ViewCountMixin):
         self.is_flagged = result.get("flagged", False)
         self.moderation_result = result
         self.moderated_at = timezone.localtime()
-        self.save(update_fields=["is_flagged", "moderation_result", "moderated_at"])
+        Story.objects.filter(pk=self.pk).update(
+            is_flagged=self.is_flagged,
+            moderation_result=self.moderation_result,
+            moderated_at=self.moderated_at,
+        )
 
 
 class UserUpdateStoryLog(models.Model):

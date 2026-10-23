@@ -8,6 +8,10 @@ trigger: always_on
 
 This is a Django 5.2 REST API service for archiving Instagram content, built on cookiecutter-django template. The project uses PostgreSQL, Redis, Celery for background processing, and Firebase for authentication.
 
+### Framework & Documentation Reference (Context7)
+
+**CRITICAL**: Before creating plans (`/plan`), optimizing, refactoring, or implementing features, always check the frameworks/libraries and versions used in this project (`pyproject.toml` / `requirements.txt`) and query **Context7 MCP** (`resolve-library-id` -> `query-docs`) as the primary implementation reference.
+
 ## Development Environment
 
 ### Docker-First Development

@@ -29,7 +29,12 @@ def update_profile_picture_from_url(self, user_id):
     Uses hash comparison to detect actual image content changes.
     """
     try:
-        user = User.objects.get(uuid=user_id)
+        user = User.objects.only(
+            "uuid",
+            "username",
+            "original_profile_picture_url",
+            "profile_picture",
+        ).get(uuid=user_id)
     except User.DoesNotExist:
         logger.exception("User with ID %s not found", user_id)
         return {"success": False, "error": "User not found"}
@@ -130,7 +135,7 @@ def update_user_stories_from_saveapi(self, user_id):
         dict: operation result with success status and details
     """
     try:
-        user = User.objects.get(uuid=user_id)
+        user = User.objects.only("uuid", "username").get(uuid=user_id)
     except User.DoesNotExist:
         logger.exception("User with ID %s not found", user_id)
         return {"success": False, "error": "User not found"}
@@ -199,13 +204,13 @@ def update_user_posts_from_api(self, user_id):
     Fetches all pages of posts using the max_id cursor.
     """
     try:
-        user = User.objects.get(uuid=user_id)
+        user = User.objects.only("uuid", "username", "instagram_id").get(uuid=user_id)
     except User.DoesNotExist:
         logger.exception("User with ID %s not found", user_id)
         return {"success": False, "error": "User not found"}
 
     try:
-        # Call the model method which handles pagination recursively
+        # Call the model method which handles pagination
         result = user._update_post_data_from_api()  # noqa: SLF001
 
         logger.info(
@@ -281,12 +286,45 @@ def auto_update_users_profile(*, force=False):
     Returns summary of operations performed.
     """
     try:
-        users = (
-            User.objects.all()
-            if force
-            else User.objects.filter(allow_auto_update_profile=True)
+        user_rows = (
+            (
+                User.objects.all()
+                if force
+                else User.objects.filter(allow_auto_update_profile=True)
+            )
+            .values_list("uuid", "username")
+            .iterator(chunk_size=2000)
         )
-        total_users = users.count()
+
+        total_users = 0
+        updated_count = 0
+        error_count = 0
+        errors = []
+        task_ids = []
+
+        for user_uuid, username in user_rows:
+            total_users += 1
+            try:
+                # Use Celery task to handle each user's profile update
+                task_result = auto_update_user_profile.delay(
+                    str(user_uuid),
+                    force=force,
+                )
+                task_ids.append(task_result.id)
+                updated_count += 1
+                logger.info(
+                    "Successfully queued profile update for user: %s (task: %s)",
+                    username,
+                    task_result.id,
+                )
+            except Exception as e:
+                error_count += 1
+                error_msg = f"Failed to queue profile update for user {username}: {e!s}"
+                errors.append(error_msg)
+                logger.exception(
+                    "Error queuing profile update for user %s",
+                    username,
+                )
 
         if total_users == 0:
             logger.info("No users found with auto-update profile enabled")
@@ -296,38 +334,6 @@ def auto_update_users_profile(*, force=False):
                 "updated": 0,
                 "errors": 0,
             }
-
-        logger.info("Starting profile update for %d users", total_users)
-
-        updated_count = 0
-        error_count = 0
-        errors = []
-        task_ids = []
-
-        for user in users:
-            try:
-                # Use Celery task to handle each user's profile update
-                task_result = auto_update_user_profile.delay(
-                    str(user.uuid),
-                    force=force,
-                )
-                task_ids.append(task_result.id)
-                updated_count += 1
-                logger.info(
-                    "Successfully queued profile update for user: %s (task: %s)",
-                    user.username,
-                    task_result.id,
-                )
-            except Exception as e:
-                error_count += 1
-                error_msg = (
-                    f"Failed to queue profile update for user {user.username}: {e!s}"
-                )
-                errors.append(error_msg)
-                logger.exception(
-                    "Error queuing profile update for user %s",
-                    user.username,
-                )
 
         logger.info(
             "Profile update queuing completed: %d queued, %d errors out of %d total users",  # noqa: E501
@@ -364,7 +370,7 @@ def auto_update_user_profile(self, user_id, *, force=False):
         dict: Operation result with success status and details
     """
     try:
-        user = User.objects.get(uuid=user_id)
+        user = User.objects.defer("raw_api_data").get(uuid=user_id)
     except User.DoesNotExist:
         logger.exception("User with ID %s not found", user_id)
         return {"success": False, "error": "User not found"}
@@ -447,12 +453,42 @@ def auto_update_users_story(*, force=False):
     Returns summary of operations performed.
     """
     try:
-        users = (
-            User.objects.all()
-            if force
-            else User.objects.filter(allow_auto_update_stories=True)
+        user_rows = (
+            (
+                User.objects.all()
+                if force
+                else User.objects.filter(allow_auto_update_stories=True)
+            )
+            .values_list("uuid", "username")
+            .iterator(chunk_size=2000)
         )
-        total_users = users.count()
+
+        total_users = 0
+        queued_count = 0
+        error_count = 0
+        errors = []
+        task_ids = []
+
+        for user_uuid, username in user_rows:
+            total_users += 1
+            try:
+                # Use Celery task to handle each user's story update
+                task_result = update_user_stories_from_saveapi.delay(str(user_uuid))
+                task_ids.append(task_result.id)
+                queued_count += 1
+                logger.info(
+                    "Successfully queued story update for user: %s (task: %s)",
+                    username,
+                    task_result.id,
+                )
+            except Exception as e:
+                error_count += 1
+                error_msg = f"Failed to queue story update for user {username}: {e!s}"
+                errors.append(error_msg)
+                logger.exception(
+                    "Error queuing story update for user %s",
+                    username,
+                )
 
         if total_users == 0:
             logger.info("No users to update stories for")
@@ -462,35 +498,6 @@ def auto_update_users_story(*, force=False):
                 "queued": 0,
                 "errors": 0,
             }
-
-        logger.info("Starting story update for %d users", total_users)
-
-        queued_count = 0
-        error_count = 0
-        errors = []
-        task_ids = []
-
-        for user in users:
-            try:
-                # Use Celery task to handle each user's story update
-                task_result = update_user_stories_from_saveapi.delay(str(user.uuid))
-                task_ids.append(task_result.id)
-                queued_count += 1
-                logger.info(
-                    "Successfully queued story update for user: %s (task: %s)",
-                    user.username,
-                    task_result.id,
-                )
-            except Exception as e:
-                error_count += 1
-                error_msg = (
-                    f"Failed to queue story update for user {user.username}: {e!s}"
-                )
-                errors.append(error_msg)
-                logger.exception(
-                    "Error queuing story update for user %s",
-                    user.username,
-                )
 
         logger.info(
             "Story update queuing completed: %d queued, %d errors"

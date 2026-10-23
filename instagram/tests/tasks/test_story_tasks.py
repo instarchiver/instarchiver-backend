@@ -326,3 +326,39 @@ class TestStoriesWithoutThumbnailAreSkipped(TestCase):
         assert result.result["success"] is False
         assert result.result["error"] == "No thumbnail"
         mock_generate.assert_not_called()
+
+
+class TestStoryTasksQueryOptimization(TestCase):
+    """Verify story tasks only run minimal queries without lazy-loading deferred fields."""  # noqa: E501
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.story.moderate_image_content")
+    def test_moderate_story_content_runs_in_two_queries(self, mock_moderate):
+        story = StoryFactory(thumbnail_url="", raw_api_data={"heavy": "json"})
+        story.thumbnail = _make_image_file()
+        story.save()
+
+        mock_moderate.return_value = {"flagged": False, "categories": {}}
+
+        with self.assertNumQueries(2):
+            result = moderate_story_content.delay(story.story_id)
+
+        assert result.result["success"] is True
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.models.story.generate_image_embedding")
+    def test_generate_story_embedding_runs_in_two_queries(self, mock_embed):
+        story = StoryFactory(
+            thumbnail_url="",
+            embedding=None,
+            raw_api_data={"heavy": "json"},
+        )
+        story.thumbnail = _make_image_file()
+        story.save()
+
+        mock_embed.return_value = ([0.1] * 1536, 20)
+
+        with self.assertNumQueries(2):
+            result = generate_story_embedding.delay(story.story_id)
+
+        assert result.result["success"] is True
