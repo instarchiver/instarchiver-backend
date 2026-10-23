@@ -1,6 +1,8 @@
 import logging
 
 from celery import shared_task
+from django.db.models import BooleanField
+from django.db.models import ExpressionWrapper
 from django.db.models import F
 from django.db.models import Q
 
@@ -235,7 +237,13 @@ def generate_story_embedding(story_id):
         dict: success (bool) with story_id and dimensions, or error (str)
     """
     story = (
-        Story.objects.only("story_id", "thumbnail", "embedding")
+        Story.objects.only("story_id", "thumbnail")
+        .annotate(
+            has_embedding=ExpressionWrapper(
+                Q(embedding__isnull=False),
+                output_field=BooleanField(),
+            ),
+        )
         .filter(story_id=story_id)
         .first()
     )
@@ -243,7 +251,7 @@ def generate_story_embedding(story_id):
         logger.error("Story with ID %s not found", story_id)
         return {"success": False, "error": "Story not found"}
 
-    if story.embedding is not None:
+    if story.has_embedding:
         return {"success": True, "message": "Embedding already exists"}
 
     if not story.thumbnail:

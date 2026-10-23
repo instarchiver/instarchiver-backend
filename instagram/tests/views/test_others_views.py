@@ -51,7 +51,7 @@ class ProcessInstagramDataViewTest(TestCase):
 
     def test_existing_user_not_duplicated(self):
         """Test that an existing user is reused without creating a duplicate."""
-        InstagramUserFactory(username="existinguser")
+        user = InstagramUserFactory(username="existinguser")
         payload = dict(
             self.valid_payload,
             username="existinguser",
@@ -60,6 +60,7 @@ class ProcessInstagramDataViewTest(TestCase):
         response = self.client.post(self.url, payload, format="json")
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data["user_created"] is False
+        assert response.data["processed_at"] == user.updated_at.isoformat()
         assert User.objects.filter(username="existinguser").count() == 1
 
     def test_existing_story_not_duplicated(self):

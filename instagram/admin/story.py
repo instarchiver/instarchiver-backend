@@ -75,3 +75,15 @@ class StoryAdmin(ModelAdmin):
         ),
     )
     ordering = ["-created_at"]
+
+    def get_queryset(self, request):
+        return (
+            super()
+            .get_queryset(request)
+            .defer(
+                "embedding",
+                "raw_api_data",
+                "moderation_result",
+                "user__raw_api_data",
+            )
+        )

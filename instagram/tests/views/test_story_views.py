@@ -3,7 +3,9 @@ import json
 from unittest.mock import patch
 
 from django.core.cache import cache
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -1150,3 +1152,74 @@ class StorySimilarViewTest(TestCase):
         usernames = {story["user"]["username"] for story in results}
         assert "user1" in usernames
         assert "user2" in usernames
+
+
+def _select_lists(queries, table):
+    """Return the SELECT list (text before the first FROM) of queries on a table."""
+    return [
+        q["sql"].split(" FROM ")[0]
+        for q in queries
+        if q["sql"].startswith("SELECT") and f' FROM "{table}"' in q["sql"]
+    ]
+
+
+class StoryQueryColumnsTest(TestCase):
+    """Story endpoints should not load columns their serializers never read."""
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.story = StoryFactory(
+            embedding=[0.1] * 1536,
+            raw_api_data={"a": 1},
+            moderation_result={"flagged": False},
+        )
+        StoryFactory(user=self.story.user, embedding=[0.2] * 1536)
+
+    def _get(self, url):
+        with CaptureQueriesContext(connection) as ctx:
+            response = self.client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        return ctx.captured_queries
+
+    def _assert_columns(self, story_selects, user_selects):
+        assert story_selects
+        assert user_selects
+        for sql in story_selects:
+            for column in ("embedding", "raw_api_data", "moderation_result"):
+                assert f'"{column}"' not in sql
+        for sql in user_selects:
+            assert '"raw_api_data"' not in sql
+            assert '"view_count"' not in sql
+
+    def test_list(self):
+        queries = self._get(reverse("instagram:story_list"))
+        self._assert_columns(
+            _select_lists(queries, "instagram_story"),
+            _select_lists(queries, "instagram_user"),
+        )
+
+    def test_detail(self):
+        url = reverse(
+            "instagram:story_detail",
+            kwargs={"story_id": self.story.story_id},
+        )
+        queries = self._get(url)
+        self._assert_columns(
+            _select_lists(queries, "instagram_story"),
+            _select_lists(queries, "instagram_user"),
+        )
+
+    def test_similar(self):
+        url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": self.story.story_id},
+        )
+        queries = self._get(url)
+        # The page query is the one ordered by L2 distance. The lookup of the
+        # source story's embedding selects that column on purpose.
+        page_queries = [q for q in queries if "<->" in q["sql"]]
+        self._assert_columns(
+            _select_lists(page_queries, "instagram_story"),
+            _select_lists(queries, "instagram_user"),
+        )

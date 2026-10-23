@@ -17,6 +17,9 @@ from rest_framework.response import Response
 
 from core.utils.view_tracking import get_client_ip
 from core.utils.view_tracking import should_count_view
+from instagram.constants import DETAIL_USER_DEFERRED
+from instagram.constants import LIST_USER_DEFERRED
+from instagram.constants import STORY_FIELDS
 from instagram.models import Story
 from instagram.models import User as InstagramUser
 from instagram.paginations import StoryCursorPagination
@@ -50,18 +53,9 @@ class StoryListView(ListAPIView):
     filterset_fields = ["user"]
 
     def get_queryset(self):
-        users = _annotated_users().defer("original_profile_picture_url", "raw_api_data")
+        users = _annotated_users().defer(*LIST_USER_DEFERRED)
         return (
-            Story.objects.only(
-                "story_id",
-                "user_id",
-                "thumbnail",
-                "blur_data_url",
-                "media",
-                "is_flagged",
-                "created_at",
-                "story_created_at",
-            )
+            Story.objects.only(*STORY_FIELDS)
             .prefetch_related(Prefetch("user", queryset=users))
             .order_by("-created_at")
         )
@@ -88,8 +82,9 @@ class StoryDetailView(RetrieveAPIView):
     lookup_field = "story_id"
 
     def get_queryset(self):
-        return Story.objects.prefetch_related(
-            Prefetch("user", queryset=_annotated_users()),
+        users = _annotated_users().defer(*DETAIL_USER_DEFERRED)
+        return Story.objects.only(*STORY_FIELDS).prefetch_related(
+            Prefetch("user", queryset=users),
         )
 
     def retrieve(self, request, *args, **kwargs):
@@ -132,10 +127,11 @@ class StorySimilarView(ListAPIView):
         if embedding is None:
             return Story.objects.none()
 
+        users = _annotated_users().defer(*LIST_USER_DEFERRED)
         return (
             Story.objects.filter(embedding__isnull=False)
             .exclude(story_id=story_id)
-            .prefetch_related(Prefetch("user", queryset=_annotated_users()))
-            .annotate(similarity_score=1 - L2Distance("embedding", embedding))
-            .order_by("-similarity_score")
+            .only(*STORY_FIELDS)
+            .prefetch_related(Prefetch("user", queryset=users))
+            .order_by(L2Distance("embedding", embedding), "story_id")
         )
