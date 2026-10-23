@@ -282,7 +282,7 @@ def _update_checkout_session_payment_status(checkout_session_id, payment_status)
         Payment.DoesNotExist: If payment is not found
     """
     try:
-        payment = Payment.objects.get(
+        payment = Payment.objects.only("id").get(
             reference_type=Payment.REFERENCE_STRIPE,
             reference=checkout_session_id,
         )
@@ -318,7 +318,7 @@ def _update_payment_status(checkout_session_id, payment_intent_id):
         Payment.DoesNotExist: If payment is not found
     """
     try:
-        payment = Payment.objects.get(
+        payment = Payment.objects.only("id").get(
             reference_type=Payment.REFERENCE_STRIPE,
             reference=checkout_session_id,
         )

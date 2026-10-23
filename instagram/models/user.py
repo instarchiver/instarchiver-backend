@@ -51,7 +51,7 @@ class GetUserPostMixIn:
     def _update_post_data_from_api(self, max_id: str | None = None) -> dict:
         """Fetch and save user posts with pagination support.
 
-        This method recursively fetches all pages of posts using the max_id cursor.
+        This method iteratively fetches all pages of posts using the max_id cursor.
 
         Args:
             max_id: Optional pagination cursor for fetching next page
@@ -61,53 +61,62 @@ class GetUserPostMixIn:
         """
         from instagram.models import Post  # noqa: PLC0415
 
-        posts, next_max_id = self.get_post_data_from_api(max_id=max_id)
-        posts_saved = 0
+        total_posts = 0
+        pages_fetched = 0
+        current_max_id = max_id
+        last_max_id = max_id
 
-        # Save posts from current page
-        for post in posts:
-            obj, _ = Post.objects.update_or_create(
-                id=post.get("pk"),
-                user=self,
-            )
-            obj.raw_data = post
-            obj.thumbnail_url = post.get("display_uri")
-            obj.caption = post.get("caption").get("text") if post.get("caption") else ""
-            # Convert epoch timestamp to timezone-aware datetime
-            taken_at = post.get("taken_at")
-            if taken_at:
-                obj.post_created_at = timezone.datetime.fromtimestamp(
-                    taken_at,
-                    tz=timezone.get_current_timezone(),
+        while True:
+            posts, next_max_id = self.get_post_data_from_api(max_id=current_max_id)
+            posts_saved = 0
+
+            # Save posts from current page
+            for post in posts:
+                defaults = {
+                    "user": self,
+                    "raw_data": post,
+                    "thumbnail_url": post.get("display_uri") or "",
+                    "caption": (
+                        post.get("caption").get("text") if post.get("caption") else ""
+                    ),
+                }
+                # Convert epoch timestamp to timezone-aware datetime
+                taken_at = post.get("taken_at")
+                if taken_at:
+                    defaults["post_created_at"] = timezone.datetime.fromtimestamp(
+                        taken_at,
+                        tz=timezone.get_current_timezone(),
+                    )
+                Post.objects.update_or_create(
+                    id=post.get("pk"),
+                    defaults=defaults,
                 )
-            obj.save()
-            posts_saved += 1
+                posts_saved += 1
 
-        logger.info(
-            "Saved %d posts for user %s (current page)",
-            posts_saved,
-            self.username,
-        )
+            total_posts += posts_saved
+            pages_fetched += 1
+            last_max_id = current_max_id
 
-        # If there's a next page, recursively fetch it
-        if next_max_id:
+            logger.info(
+                "Saved %d posts for user %s (current page)",
+                posts_saved,
+                self.username,
+            )
+
+            if not next_max_id:
+                break
+
             logger.info(
                 "Fetching next page for user %s with max_id: %s",
                 self.username,
                 next_max_id,
             )
-            next_result = self._update_post_data_from_api(max_id=next_max_id)
-            return {
-                "total_posts": posts_saved + next_result["total_posts"],
-                "pages_fetched": 1 + next_result["pages_fetched"],
-                "last_max_id": next_result["last_max_id"],
-            }
+            current_max_id = next_max_id
 
-        # No more pages, return summary
         return {
-            "total_posts": posts_saved,
-            "pages_fetched": 1,
-            "last_max_id": max_id,
+            "total_posts": total_posts,
+            "pages_fetched": pages_fetched,
+            "last_max_id": last_max_id,
         }
 
     def update_post_data_from_api(self):
@@ -207,7 +216,13 @@ class GetUserStoryMixIn:
                     continue
 
                 is_image = media.get("type") == "image"  # image or video
-                story, _ = Story.objects.get_or_create(
+                story, _ = Story.objects.only(
+                    "story_id",
+                    "user_id",
+                    "thumbnail_url",
+                    "media_url",
+                    "story_created_at",
+                ).get_or_create(
                     story_id=self._get_story_id_from_media_url(media_url),
                     defaults={
                         "user": self,

@@ -38,7 +38,7 @@ def post_generate_blur_data_url(self, post_id: str) -> dict:
         dict: Operation result with success status and details
     """
     try:
-        post = Post.objects.get(id=post_id)
+        post = Post.objects.only("id", "thumbnail", "thumbnail_url").get(id=post_id)
     except Post.DoesNotExist:
         logger.exception("Post with ID %s not found", post_id)
         return {"success": False, "error": "Post not found"}
@@ -49,9 +49,9 @@ def post_generate_blur_data_url(self, post_id: str) -> dict:
             post.thumbnail.url if post.thumbnail else post.thumbnail_url,
         )
 
-        # Save to the model
+        # Save to the model using update() to avoid triggering signals/history
         post.blur_data_url = blur_data_url
-        post.save()
+        Post.objects.filter(id=post_id).update(blur_data_url=blur_data_url)
 
         logger.info(
             "Successfully generated blur data URL for post %s",
@@ -121,9 +121,43 @@ def periodic_generate_post_blur_data_urls():
         dict: Summary of operations performed
     """
     try:
-        # Get all posts without blur_data_url
-        posts = Post.objects.filter(blur_data_url="")
-        total_posts = posts.count()
+        # Stream post IDs without instantiating full Post model objects
+        post_ids = (
+            Post.objects.filter(blur_data_url="")
+            .values_list("id", flat=True)
+            .iterator(chunk_size=2000)
+        )
+
+        total_posts = 0
+        queued_count = 0
+        error_count = 0
+        errors = []
+        task_ids = []
+
+        for post_id in post_ids:
+            total_posts += 1
+            try:
+                # Queue the blur data URL generation task
+                task_result = post_generate_blur_data_url.delay(post_id)
+                task_ids.append(task_result.id)
+                queued_count += 1
+                logger.info(
+                    "Successfully queued blur data URL generation for "
+                    "post: %s (task: %s)",
+                    post_id,
+                    task_result.id,
+                )
+            except Exception as e:
+                error_count += 1
+                error_msg = (
+                    f"Failed to queue blur data URL generation for "
+                    f"post {post_id}: {e!s}"
+                )
+                errors.append(error_msg)
+                logger.exception(
+                    "Error queuing blur data URL generation for post %s",
+                    post_id,
+                )
 
         if total_posts == 0:
             logger.info("No posts found without blur data URL")
@@ -133,40 +167,6 @@ def periodic_generate_post_blur_data_urls():
                 "queued": 0,
                 "errors": 0,
             }
-
-        logger.info(
-            "Starting blur data URL generation for %d posts",
-            total_posts,
-        )
-
-        queued_count = 0
-        error_count = 0
-        errors = []
-        task_ids = []
-
-        for post in posts:
-            try:
-                # Queue the blur data URL generation task
-                task_result = post_generate_blur_data_url.delay(post.id)
-                task_ids.append(task_result.id)
-                queued_count += 1
-                logger.info(
-                    "Successfully queued blur data URL generation for "
-                    "post: %s (task: %s)",
-                    post.id,
-                    task_result.id,
-                )
-            except Exception as e:
-                error_count += 1
-                error_msg = (
-                    f"Failed to queue blur data URL generation for "
-                    f"post {post.id}: {e!s}"
-                )
-                errors.append(error_msg)
-                logger.exception(
-                    "Error queuing blur data URL generation for post %s",
-                    post.id,
-                )
 
         logger.info(
             "Blur data URL generation queuing completed: "
@@ -204,7 +204,9 @@ def post_media_generate_blur_data_url(self, post_media_id: int) -> dict:
         dict: Operation result with success status and details
     """
     try:
-        post_media = PostMedia.objects.get(id=post_media_id)
+        post_media = PostMedia.objects.only("id", "thumbnail", "thumbnail_url").get(
+            id=post_media_id,
+        )
     except PostMedia.DoesNotExist:
         logger.exception("PostMedia with ID %s not found", post_media_id)
         return {"success": False, "error": "PostMedia not found"}
@@ -218,9 +220,9 @@ def post_media_generate_blur_data_url(self, post_media_id: int) -> dict:
         )
         blur_data_url = generate_blur_data_url_from_image_url(image_url)
 
-        # Save to the model
+        # Save to the model using update() to avoid triggering signals
         post_media.blur_data_url = blur_data_url
-        post_media.save()
+        PostMedia.objects.filter(id=post_media_id).update(blur_data_url=blur_data_url)
 
         logger.info(
             "Successfully generated blur data URL for post media %s",
@@ -290,9 +292,43 @@ def periodic_generate_post_media_blur_data_urls():
         dict: Summary of operations performed
     """
     try:
-        # Get all post media without blur_data_url
-        post_media_items = PostMedia.objects.filter(blur_data_url="")
-        total_items = post_media_items.count()
+        # Stream post media IDs without instantiating full PostMedia objects
+        post_media_ids = (
+            PostMedia.objects.filter(blur_data_url="")
+            .values_list("id", flat=True)
+            .iterator(chunk_size=2000)
+        )
+
+        total_items = 0
+        queued_count = 0
+        error_count = 0
+        errors = []
+        task_ids = []
+
+        for post_media_id in post_media_ids:
+            total_items += 1
+            try:
+                # Queue the blur data URL generation task
+                task_result = post_media_generate_blur_data_url.delay(post_media_id)
+                task_ids.append(task_result.id)
+                queued_count += 1
+                logger.info(
+                    "Successfully queued blur data URL generation for "
+                    "post media: %s (task: %s)",
+                    post_media_id,
+                    task_result.id,
+                )
+            except Exception as e:
+                error_count += 1
+                error_msg = (
+                    f"Failed to queue blur data URL generation for "
+                    f"post media {post_media_id}: {e!s}"
+                )
+                errors.append(error_msg)
+                logger.exception(
+                    "Error queuing blur data URL generation for post media %s",
+                    post_media_id,
+                )
 
         if total_items == 0:
             logger.info("No post media found without blur data URL")
@@ -302,40 +338,6 @@ def periodic_generate_post_media_blur_data_urls():
                 "queued": 0,
                 "errors": 0,
             }
-
-        logger.info(
-            "Starting blur data URL generation for %d post media items",
-            total_items,
-        )
-
-        queued_count = 0
-        error_count = 0
-        errors = []
-        task_ids = []
-
-        for post_media in post_media_items:
-            try:
-                # Queue the blur data URL generation task
-                task_result = post_media_generate_blur_data_url.delay(post_media.id)
-                task_ids.append(task_result.id)
-                queued_count += 1
-                logger.info(
-                    "Successfully queued blur data URL generation for "
-                    "post media: %s (task: %s)",
-                    post_media.id,
-                    task_result.id,
-                )
-            except Exception as e:
-                error_count += 1
-                error_msg = (
-                    f"Failed to queue blur data URL generation for "
-                    f"post media {post_media.id}: {e!s}"
-                )
-                errors.append(error_msg)
-                logger.exception(
-                    "Error queuing blur data URL generation for post media %s",
-                    post_media.id,
-                )
 
         logger.info(
             "Blur data URL generation queuing completed: "
@@ -375,7 +377,11 @@ def download_post_thumbnail_from_url(self, post_id):
         dict: Operation result with success status and details
     """
     try:
-        post = Post.objects.get(id=post_id)
+        post = (
+            Post.objects.select_related("user")
+            .only("id", "thumbnail_url", "thumbnail", "user__uuid", "user__username")
+            .get(id=post_id)
+        )
     except Post.DoesNotExist:
         logger.exception("Post with ID %s not found", post_id)
         return {"success": False, "error": "Post not found"}
@@ -565,7 +571,18 @@ def download_post_media_thumbnail_from_url(self, post_media_id):
         dict: Operation result with success status and details
     """
     try:
-        post_media = PostMedia.objects.get(id=post_media_id)
+        post_media = (
+            PostMedia.objects.select_related("post__user")
+            .only(
+                "id",
+                "thumbnail_url",
+                "thumbnail",
+                "post__id",
+                "post__user__uuid",
+                "post__user__username",
+            )
+            .get(id=post_media_id)
+        )
     except PostMedia.DoesNotExist:
         logger.exception("PostMedia with ID %s not found", post_media_id)
         return {"success": False, "error": "PostMedia not found"}
@@ -672,7 +689,18 @@ def download_post_media_from_url(self, post_media_id):
         dict: Operation result with success status and details
     """
     try:
-        post_media = PostMedia.objects.get(id=post_media_id)
+        post_media = (
+            PostMedia.objects.select_related("post__user")
+            .only(
+                "id",
+                "media_url",
+                "media",
+                "post__id",
+                "post__user__uuid",
+                "post__user__username",
+            )
+            .get(id=post_media_id)
+        )
     except PostMedia.DoesNotExist:
         logger.exception("PostMedia with ID %s not found", post_media_id)
         return {"success": False, "error": "PostMedia not found"}
@@ -764,7 +792,7 @@ def generate_post_embedding(self, post_id: str) -> dict:  # noqa: PLR0911
         dict: Operation result with success status and details
     """
     try:
-        post = Post.objects.get(id=post_id)
+        post = Post.objects.only("id", "thumbnail", "embedding").get(id=post_id)
     except Post.DoesNotExist:
         logger.exception("Post with ID %s not found", post_id)
         return {"success": False, "error": "Post not found"}
@@ -871,12 +899,44 @@ def periodic_generate_post_embeddings():
         dict: Summary of operations performed
     """
     try:
-        posts = Post.objects.filter(
-            embedding__isnull=True,
-            thumbnail__isnull=False,
-            thumbnail__gt="",
+        post_ids = (
+            Post.objects.filter(
+                embedding__isnull=True,
+                thumbnail__isnull=False,
+                thumbnail__gt="",
+            )
+            .values_list("id", flat=True)
+            .iterator(chunk_size=2000)
         )
-        total_posts = posts.count()
+
+        total_posts = 0
+        queued_count = 0
+        error_count = 0
+        errors = []
+        task_ids = []
+
+        for post_id in post_ids:
+            total_posts += 1
+            try:
+                # Queue the embedding generation task
+                task_result = generate_post_embedding.delay(post_id)
+                task_ids.append(task_result.id)
+                queued_count += 1
+                logger.info(
+                    "Successfully queued embedding generation for post: %s (task: %s)",
+                    post_id,
+                    task_result.id,
+                )
+            except Exception as e:
+                error_count += 1
+                error_msg = (
+                    f"Failed to queue embedding generation for post {post_id}: {e!s}"
+                )
+                errors.append(error_msg)
+                logger.exception(
+                    "Error queuing embedding generation for post %s",
+                    post_id,
+                )
 
         if total_posts == 0:
             logger.info("No posts found without embeddings")
@@ -886,38 +946,6 @@ def periodic_generate_post_embeddings():
                 "queued": 0,
                 "errors": 0,
             }
-
-        logger.info(
-            "Starting embedding generation for %d posts",
-            total_posts,
-        )
-
-        queued_count = 0
-        error_count = 0
-        errors = []
-        task_ids = []
-
-        for post in posts:
-            try:
-                # Queue the embedding generation task
-                task_result = generate_post_embedding.delay(post.id)
-                task_ids.append(task_result.id)
-                queued_count += 1
-                logger.info(
-                    "Successfully queued embedding generation for post: %s (task: %s)",
-                    post.id,
-                    task_result.id,
-                )
-            except Exception as e:
-                error_count += 1
-                error_msg = (
-                    f"Failed to queue embedding generation for post {post.id}: {e!s}"
-                )
-                errors.append(error_msg)
-                logger.exception(
-                    "Error queuing embedding generation for post %s",
-                    post.id,
-                )
 
         logger.info(
             "Embedding generation queuing completed: "
@@ -955,7 +983,7 @@ def moderate_post_content(self, post_id: str) -> dict:
         dict: Result summary with success status and post_id.
     """
     try:
-        post = Post.objects.get(id=post_id)
+        post = Post.objects.only("id", "thumbnail").get(id=post_id)
         post.moderate_content()
         logger.info("Successfully moderated post %s", post_id)
         return {"success": True, "post_id": post_id}  # noqa: TRY300
@@ -977,11 +1005,40 @@ def periodic_moderate_post_content():
         dict: Summary of operations performed.
     """
     try:
-        posts = Post.objects.filter(
-            thumbnail__isnull=False,
-            moderated_at__isnull=True,
+        post_ids = (
+            Post.objects.filter(
+                thumbnail__isnull=False,
+                moderated_at__isnull=True,
+            )
+            .values_list("id", flat=True)
+            .iterator(chunk_size=2000)
         )
-        total_posts = posts.count()
+
+        total_posts = 0
+        queued_count = 0
+        error_count = 0
+        errors = []
+        task_ids = []
+
+        for post_id in post_ids:
+            total_posts += 1
+            try:
+                task_result = moderate_post_content.delay(post_id)
+                task_ids.append(task_result.id)
+                queued_count += 1
+                logger.info(
+                    "Successfully queued moderation for post: %s (task: %s)",
+                    post_id,
+                    task_result.id,
+                )
+            except Exception as e:
+                error_count += 1
+                error_msg = f"Failed to queue moderation for post {post_id}: {e!s}"
+                errors.append(error_msg)
+                logger.exception(
+                    "Error queuing moderation for post %s",
+                    post_id,
+                )
 
         if total_posts == 0:
             logger.info("No posts found pending moderation")
@@ -991,32 +1048,6 @@ def periodic_moderate_post_content():
                 "queued": 0,
                 "errors": 0,
             }
-
-        logger.info("Starting content moderation for %d posts", total_posts)
-
-        queued_count = 0
-        error_count = 0
-        errors = []
-        task_ids = []
-
-        for post in posts:
-            try:
-                task_result = moderate_post_content.delay(post.id)
-                task_ids.append(task_result.id)
-                queued_count += 1
-                logger.info(
-                    "Successfully queued moderation for post: %s (task: %s)",
-                    post.id,
-                    task_result.id,
-                )
-            except Exception as e:
-                error_count += 1
-                error_msg = f"Failed to queue moderation for post {post.id}: {e!s}"
-                errors.append(error_msg)
-                logger.exception(
-                    "Error queuing moderation for post %s",
-                    post.id,
-                )
 
         logger.info(
             "Content moderation queuing completed: %d queued, %d errors out of %d total posts",  # noqa: E501

@@ -97,7 +97,10 @@ class Post(InstagramModerationMixin, ViewCountMixin):
 
             self.embedding = embedding
             self.embedding_token_usage = token_usage
-            self.save(update_fields=["embedding", "embedding_token_usage"])
+            Post.objects.filter(pk=self.pk).update(
+                embedding=embedding,
+                embedding_token_usage=token_usage,
+            )
 
             logger.info(
                 "Generated embedding for post %s (dimensions: %d, tokens: %d)",
@@ -127,7 +130,11 @@ class Post(InstagramModerationMixin, ViewCountMixin):
         self.is_flagged = result.get("flagged", False)
         self.moderation_result = result
         self.moderated_at = timezone.localtime()
-        self.save(update_fields=["is_flagged", "moderation_result", "moderated_at"])
+        Post.objects.filter(pk=self.pk).update(
+            is_flagged=self.is_flagged,
+            moderation_result=self.moderation_result,
+            moderated_at=self.moderated_at,
+        )
 
     def moderate_content_task(self):
         """

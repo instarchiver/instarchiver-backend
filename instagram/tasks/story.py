@@ -35,7 +35,20 @@ def _save_story_file(story_id, field, make_file):
         tuple: (Story or None, saved file name str or None). The story is
         None when it does not exist.
     """
-    story = Story.objects.filter(story_id=story_id).first()
+    story = (
+        Story.objects.select_related("user")
+        .only(
+            "story_id",
+            "thumbnail_url",
+            "media_url",
+            "thumbnail",
+            "media",
+            "user__uuid",
+            "user__username",
+        )
+        .filter(story_id=story_id)
+        .first()
+    )
     if story is None:
         logger.error("Story with ID %s not found", story_id)
         return None, None
@@ -56,9 +69,11 @@ def _queue_each(task, stories):
     Returns:
         dict: success (bool), total, queued and errors (int)
     """
-    story_ids = list(stories.values_list("story_id", flat=True))
+    story_ids = stories.values_list("story_id", flat=True).iterator(chunk_size=2000)
+    total = 0
     errors = 0
     for story_id in story_ids:
+        total += 1
         try:
             task.delay(story_id)
         except Exception:
@@ -68,13 +83,13 @@ def _queue_each(task, stories):
     logger.info(
         "Queued %s for %d of %d stories",
         task.name,
-        len(story_ids) - errors,
-        len(story_ids),
+        total - errors,
+        total,
     )
     return {
         "success": True,
-        "total": len(story_ids),
-        "queued": len(story_ids) - errors,
+        "total": total,
+        "queued": total - errors,
         "errors": errors,
     }
 
@@ -169,7 +184,11 @@ def story_generate_blur_data_url(story_id):
     Returns:
         dict: success (bool) and story_id, or error (str)
     """
-    story = Story.objects.filter(story_id=story_id).first()
+    story = (
+        Story.objects.only("story_id", "thumbnail", "thumbnail_url")
+        .filter(story_id=story_id)
+        .first()
+    )
     if story is None:
         logger.error("Story with ID %s not found", story_id)
         return {"success": False, "error": "Story not found"}
@@ -215,7 +234,11 @@ def generate_story_embedding(story_id):
     Returns:
         dict: success (bool) with story_id and dimensions, or error (str)
     """
-    story = Story.objects.filter(story_id=story_id).first()
+    story = (
+        Story.objects.only("story_id", "thumbnail", "embedding")
+        .filter(story_id=story_id)
+        .first()
+    )
     if story is None:
         logger.error("Story with ID %s not found", story_id)
         return {"success": False, "error": "Story not found"}
@@ -261,7 +284,9 @@ def moderate_story_content(self, story_id):
     Returns:
         dict: success (bool) and story_id, plus error (str) on failure
     """
-    story = Story.objects.filter(story_id=story_id).first()
+    story = (
+        Story.objects.only("story_id", "thumbnail").filter(story_id=story_id).first()
+    )
     if story is None:
         logger.error("Story %s not found", story_id)
         return {"success": False, "story_id": story_id, "error": "Story not found"}
