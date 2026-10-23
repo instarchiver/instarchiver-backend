@@ -48,15 +48,11 @@ class InstagramUserListCreateView(ListCreateAPIView):
         return InstagramUserListSerializer
 
     def get_queryset(self):
-        return (
-            InstagramUser.objects.all()
-            .prefetch_related("story_set")
-            .annotate(
-                has_stories=Exists(Story.objects.filter(user=OuterRef("pk"))),
-                has_history=Exists(
-                    InstagramUser.history.model.objects.filter(uuid=OuterRef("pk")),
-                ),
-            )
+        return InstagramUser.objects.all().annotate(
+            has_stories=Exists(Story.objects.filter(user=OuterRef("pk"))),
+            has_history=Exists(
+                InstagramUser.history.model.objects.filter(uuid=OuterRef("pk")),
+            ),
         )
 
     def create(self, request, *args, **kwargs):
@@ -112,15 +108,11 @@ class InstagramUserDetailView(RetrieveAPIView):
     search_fields = ["full_name", "username", "biography"]
 
     def get_queryset(self):
-        return (
-            InstagramUser.objects.all()
-            .prefetch_related("story_set")
-            .annotate(
-                has_stories=Exists(Story.objects.filter(user=OuterRef("pk"))),
-                has_history=Exists(
-                    InstagramUser.history.model.objects.filter(uuid=OuterRef("pk")),
-                ),
-            )
+        return InstagramUser.objects.all().annotate(
+            has_stories=Exists(Story.objects.filter(user=OuterRef("pk"))),
+            has_history=Exists(
+                InstagramUser.history.model.objects.filter(uuid=OuterRef("pk")),
+            ),
         )
 
     def retrieve(self, request, *args, **kwargs):

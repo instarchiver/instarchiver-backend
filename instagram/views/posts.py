@@ -57,7 +57,7 @@ class PostListView(ListAPIView):
         ordered_postmedia = PostMedia.objects.order_by("-reference")
 
         return (
-            Post.objects.all()
+            Post.objects.defer("raw_data", "embedding")
             .prefetch_related(
                 Prefetch("user", queryset=annotated_users),
                 Prefetch("postmedia_set", queryset=ordered_postmedia),
@@ -85,7 +85,7 @@ class PostDetailView(RetrieveAPIView):
         # Order PostMedia by created_at to ensure consistent ordering
         ordered_postmedia = PostMedia.objects.order_by("-reference")
 
-        return Post.objects.all().prefetch_related(
+        return Post.objects.defer("raw_data", "embedding").prefetch_related(
             Prefetch("user", queryset=annotated_users),
             Prefetch("postmedia_set", queryset=ordered_postmedia),
         )
@@ -148,6 +148,7 @@ class PostAISearchView(ListAPIView):
         # Filter posts with embeddings and order by similarity
         return (
             Post.objects.filter(embedding__isnull=False)
+            .defer("raw_data", "embedding")
             .prefetch_related(
                 Prefetch("user", queryset=annotated_users),
                 Prefetch("postmedia_set", queryset=ordered_postmedia),
@@ -218,6 +219,7 @@ class PostSimilarView(ListAPIView):
         # Find similar posts using L2Distance
         return (
             Post.objects.filter(embedding__isnull=False)
+            .defer("raw_data", "embedding")
             .exclude(id=post_id)  # Exclude the source post itself
             .prefetch_related(
                 Prefetch("user", queryset=annotated_users),

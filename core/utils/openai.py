@@ -32,7 +32,7 @@ def get_openai_client(model_name: str | None = None) -> openai.OpenAI:
     api_key = get_api_key()
     if model_name is None:
         model_name = get_model_name()
-    return openai.OpenAI(api_key=api_key)
+    return openai.OpenAI(api_key=api_key, timeout=15, max_retries=1)
 
 
 def validate_settings() -> bool:

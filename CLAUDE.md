@@ -225,7 +225,7 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 - Configure it with `saveapi_url` and `saveapi_api_key` on `CoreAPISetting`
 - Profiles can only be looked up by username. `User.update_profile_from_api()` raises `SaveAPIError` with code `ID_MISMATCH` when the returned id differs from the stored `instagram_id` (the username now belongs to another account), and `DUPLICATE_ACCOUNT` when the returned id or username is already on another row. Neither is retried. `recent_posts` and `credits` are dropped before the response is stored in `raw_api_data`
 - HTTP errors are raised as `SaveAPIError` with `code`, `status_code`, `retryable` and `retry_after` (the Retry-After header in seconds, or None). `is_rate_limited` is True for a 429 or the `RATE_LIMITED` code. Story and profile tasks retry only when `is_retryable_error()` returns True, which covers timeouts, connection errors, 429/5xx and the `RATE_LIMITED` code
-- When SaveAPI rate limits a story task and sends Retry-After, the task queues itself again with `apply_async(countdown=retry_after)`, with no attempt limit. Without the header, or in eager mode, it uses the normal `task.retry()` backoff
+- When SaveAPI rate limits a story or profile task and sends Retry-After, the task queues itself again with `apply_async(countdown=retry_after)`, with no attempt limit. Without the header, or in eager mode, it uses the normal `task.retry()` backoff
 - The module has no type hints. Argument and return types are written in the docstrings
 - SaveAPI returns no story IDs or timestamps, so `Story.story_id` is the SHA-1 of the media URL path and `story_created_at` is the fetch time. Video stories have no thumbnail URL; the thumbnail is cut from a frame of the downloaded video
 
