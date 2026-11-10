@@ -13,6 +13,11 @@
  *   k6 run scripts/k6/posts.js
  *   BASE_URL=http://localhost:8000 JWT_TOKEN=<token> k6 run scripts/k6/posts.js
  *   k6 run --vus 20 --duration 60s scripts/k6/posts.js
+ *
+ * Web dashboard (live at http://localhost:5665 while the test runs;
+ * K6_WEB_DASHBOARD_EXPORT also saves an HTML report when it ends):
+ *   K6_WEB_DASHBOARD=true k6 run scripts/k6/posts.js
+ *   K6_WEB_DASHBOARD=true K6_WEB_DASHBOARD_EXPORT=report.html k6 run scripts/k6/posts.js
  */
 
 import { check, sleep } from 'k6'
