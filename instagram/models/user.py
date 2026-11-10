@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import requests
 from django.db import models
+from django.db import transaction
 from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
@@ -147,7 +148,6 @@ class GetUserPostMixIn:
         from .post import Post  # noqa: PLC0415
 
         post_id = response.get("video_id")
-        thumbnail_url = response.get("meta", {}).get("thumbnail")
         if not post_id:
             logger.warning(
                 "Skipping post of user %s: response has no video_id",
@@ -156,6 +156,7 @@ class GetUserPostMixIn:
             return None
 
         meta = response.get("meta") or {}
+        thumbnail_url = meta.get("thumbnail") or ""
         defaults = {
             "user": self,
             "variant": self._get_post_type(response),
@@ -172,6 +173,46 @@ class GetUserPostMixIn:
 
         post, _ = Post.objects.get_or_create(id=str(post_id), defaults=defaults)
         return post
+
+    def update_posts_from_api(self):
+        """Fetch and save each post in recent_posts from the API.
+
+        Posts with an unknown type are logged and skipped so one unsupported
+        item does not block the rest. Rate limits from fetch_post_details()
+        propagate so the caller can back off.
+
+        Returns:
+            list[Post]: posts from the response, new and existing
+
+        Raises:
+            SaveAPIError: if the API rate limits the request
+        """
+        saved_posts = []
+        for response in self.fetch_post_details():
+            try:
+                post = self.save_post_from_saveapi(response)
+            except ValueError as e:
+                logger.warning(
+                    "Skipping post %s of user %s: %s",
+                    response.get("video_id"),
+                    self.username,
+                    e,
+                )
+                continue
+            if post is not None:
+                saved_posts.append(post)
+        return saved_posts
+
+    def update_posts_from_api_async(self):
+        """Queue a background task that updates user posts from the API.
+
+        Returns:
+            AsyncResult: the queued task
+        """
+        from instagram.tasks import update_user_posts_from_api  # noqa: PLC0415
+
+        logger.info("Queuing post update task for user %s", self.username)
+        return update_user_posts_from_api.delay(self.uuid)
 
 
 class GetUserStoryMixIn:
@@ -428,3 +469,6 @@ class User(GetUserPostMixIn, GetUserStoryMixIn, ViewCountMixin):
         self._extract_api_data_from_saveapi(response)
         self.api_updated_at = timezone.now()
         self.save()
+
+        ## Queue a background task to update posts after the user profile is updated.
+        transaction.on_commit(self.update_posts_from_api_async)

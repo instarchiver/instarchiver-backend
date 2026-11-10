@@ -377,14 +377,14 @@ class TestUserSavePostFromSaveapi(TestCase):
         assert post.caption == "old"
         assert Post.objects.count() == 1
 
-    def test_thumbnail_falls_back_to_first_image(self):
-        """Without meta.thumbnail the first image media URL is used."""
+    def test_missing_thumbnail_defaults_to_empty_string(self):
+        """Without meta.thumbnail the post is saved with an empty thumbnail_url."""
         user = InstagramUserFactory()
         response = _saveapi_post(meta={"text": "x"})
 
         post = user.save_post_from_saveapi(response)
 
-        assert post.thumbnail_url == "https://cdn.example.com/full.jpg"
+        assert post.thumbnail_url == ""
 
     def test_missing_video_id_returns_none(self):
         """A response without video_id saves nothing."""
@@ -392,6 +392,66 @@ class TestUserSavePostFromSaveapi(TestCase):
 
         assert user.save_post_from_saveapi(_saveapi_post(video_id=None)) is None
         assert not Post.objects.exists()
+
+
+class TestUserUpdatePostsFromApi(TestCase):
+    """Tests for User.update_posts_from_api and update_posts_from_api_async."""
+
+    @patch("instagram.models.user.User.fetch_post_details")
+    def test_saves_each_fetched_post(self, mock_details):
+        """Every valid post from fetch_post_details is saved and returned."""
+        user = InstagramUserFactory()
+        mock_details.return_value = iter(
+            [
+                _saveapi_post(video_id="101", type="image"),
+                _saveapi_post(video_id="102", type="video"),
+            ],
+        )
+
+        saved = user.update_posts_from_api()
+
+        assert [post.id for post in saved] == ["101", "102"]
+        assert Post.objects.filter(user=user).count() == 2  # noqa: PLR2004
+
+    @patch("instagram.models.user.User.fetch_post_details")
+    def test_skips_unknown_type_and_missing_video_id(self, mock_details):
+        """Posts with an unknown type or no video_id are skipped without stopping."""
+        user = InstagramUserFactory()
+        mock_details.return_value = iter(
+            [
+                _saveapi_post(video_id="101", type="reel"),
+                _saveapi_post(video_id=None, type="image"),
+                _saveapi_post(video_id="103", type="album"),
+            ],
+        )
+
+        saved = user.update_posts_from_api()
+
+        assert [post.id for post in saved] == ["103"]
+        assert saved[0].variant == Post.POST_VARIANT_CAROUSEL
+
+    @patch("instagram.models.user.User.fetch_post_details")
+    def test_rate_limit_propagates(self, mock_details):
+        """A rate limit from fetch_post_details is not swallowed."""
+        user = InstagramUserFactory()
+        mock_details.side_effect = SaveAPIError(
+            "RATE_LIMITED",
+            "slow down",
+            status_code=429,
+            retryable=True,
+        )
+
+        with pytest.raises(SaveAPIError, match="RATE_LIMITED"):
+            user.update_posts_from_api()
+
+    @patch("instagram.tasks.update_user_posts_from_api.delay")
+    def test_async_queues_task(self, mock_delay):
+        """update_posts_from_api_async queues the Celery task."""
+        user = InstagramUserFactory()
+
+        user.update_posts_from_api_async()
+
+        mock_delay.assert_called_once_with(user.uuid)
 
 
 class TestUserUpdateProfileFromApi(TestCase):
@@ -413,6 +473,24 @@ class TestUserUpdateProfileFromApi(TestCase):
         assert "credits" not in user.raw_api_data
         assert user.raw_api_data["recent_posts"] == [{"id": "1", "shortcode": "abc"}]
         assert user.raw_api_data["id"] == "111"
+
+    @patch("instagram.signals.user.update_profile_picture_from_url.delay")
+    @patch("instagram.tasks.update_user_posts_from_api.delay")
+    @patch("instagram.models.user.fetch_user_profile")
+    def test_update_profile_queues_post_update_on_commit(
+        self,
+        mock_fetch,
+        mock_posts_delay,
+        mock_pic_delay,
+    ):
+        """Committing a profile update queues update_user_posts_from_api."""
+        user = InstagramUserFactory(username="testuser", instagram_id="111")
+        mock_fetch.return_value = _saveapi_profile()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            user.update_profile_from_api()
+
+        mock_posts_delay.assert_called_once_with(user.uuid)
 
     @patch("instagram.models.user.fetch_user_profile")
     def test_update_profile_sets_missing_instagram_id(self, mock_fetch):

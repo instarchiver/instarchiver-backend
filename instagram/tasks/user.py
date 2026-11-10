@@ -197,6 +197,83 @@ def update_user_stories_from_saveapi(self, user_id):
     }
 
 
+@shared_task(bind=True, max_retries=5, default_retry_delay=60)
+def update_user_posts_from_api(self, user_id):
+    """Update a user's posts from the API.
+
+    Queued after update_profile_from_api() commits and by the admin
+    "Update Posts" action.
+
+    Args:
+        user_id (str): UUID of the user to update
+
+    Returns:
+        dict: operation result with success status and details
+    """
+    try:
+        user = User.objects.only("uuid", "username", "raw_api_data").get(
+            uuid=user_id,
+        )
+    except User.DoesNotExist:
+        logger.exception("User with ID %s not found", user_id)
+        return {"success": False, "error": "User not found"}
+
+    try:
+        updated_posts = user.update_posts_from_api()
+    except Exception as e:
+        error_msg = str(e)
+
+        # Requeue after Retry-After. Skipped in eager mode, which ignores countdown.
+        if (
+            getattr(e, "is_rate_limited", False)
+            and e.retry_after
+            and not self.request.is_eager
+        ):
+            self.apply_async(args=[str(user.uuid)], countdown=e.retry_after)
+            logger.warning(
+                "Rate limited on %s, requeued in %ss",
+                user.username,
+                e.retry_after,
+            )
+            return {"success": False, "rescheduled": True, "username": user.username}
+
+        if is_retryable_error(e) and self.request.retries < self.max_retries:
+            logger.warning(
+                "Retryable error updating posts for %s (attempt %s/%s): %s",
+                user.username,
+                self.request.retries + 1,
+                self.max_retries + 1,
+                error_msg,
+            )
+            countdown = 60 * (2**self.request.retries)
+            raise self.retry(exc=e, countdown=countdown) from e
+
+        logger.exception(
+            "Failed to update posts for user %s after %s attempts",
+            user.username,
+            self.request.retries + 1,
+        )
+        return {
+            "success": False,
+            "error": error_msg,
+            "username": user.username,
+            "attempts": self.request.retries + 1,
+        }
+
+    posts_count = len(updated_posts) if updated_posts else 0
+    logger.info(
+        "Successfully updated %d posts for user %s via Celery task",
+        posts_count,
+        user.username,
+    )
+    return {
+        "success": True,
+        "message": f"Successfully updated {posts_count} posts",
+        "posts_count": posts_count,
+        "username": user.username,
+    }
+
+
 @shared_task
 def auto_update_users_profile(*, force=False):
     """
