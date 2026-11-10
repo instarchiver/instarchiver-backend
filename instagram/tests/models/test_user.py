@@ -283,6 +283,44 @@ def _saveapi_post(**overrides):
     return response
 
 
+class TestUserGetPostType(TestCase):
+    """Tests for the User._get_post_type method."""
+
+    def test_album_returns_carousel(self):
+        """An album response maps to POST_VARIANT_CAROUSEL."""
+        assert (
+            User._get_post_type(_saveapi_post(type="album"))  # noqa: SLF001
+            == Post.POST_VARIANT_CAROUSEL
+        )
+
+    def test_video_returns_video(self):
+        """A video response maps to POST_VARIANT_VIDEO."""
+        assert (
+            User._get_post_type(_saveapi_post(type="video"))  # noqa: SLF001
+            == Post.POST_VARIANT_VIDEO
+        )
+
+    def test_image_returns_normal(self):
+        """An image response maps to POST_VARIANT_NORMAL."""
+        assert (
+            User._get_post_type(_saveapi_post(type="image"))  # noqa: SLF001
+            == Post.POST_VARIANT_NORMAL
+        )
+
+    def test_unknown_type_raises_value_error(self):
+        """An unknown, missing or non-string type raises ValueError."""
+        for bad_response in (
+            _saveapi_post(type="reel"),
+            _saveapi_post(type=""),
+            _saveapi_post(type=None),
+            _saveapi_post(type=["album"]),
+            {},
+            None,
+        ):
+            with pytest.raises(ValueError, match="Unknown post type:"):
+                User._get_post_type(bad_response)  # noqa: SLF001
+
+
 class TestUserSavePostFromSaveapi(TestCase):
     """Tests for the User.save_post_from_saveapi method."""
 
@@ -309,6 +347,23 @@ class TestUserSavePostFromSaveapi(TestCase):
         post = user.save_post_from_saveapi(_saveapi_post(type="album"))
 
         assert post.variant == Post.POST_VARIANT_CAROUSEL
+
+    def test_video_is_video(self):
+        """A video response is saved as a video post."""
+        user = InstagramUserFactory()
+
+        post = user.save_post_from_saveapi(_saveapi_post(type="video"))
+
+        assert post.variant == Post.POST_VARIANT_VIDEO
+
+    def test_unknown_type_raises_value_error(self):
+        """An unknown post type raises ValueError and saves nothing."""
+        user = InstagramUserFactory()
+
+        with pytest.raises(ValueError, match="Unknown post type: 'reel'"):
+            user.save_post_from_saveapi(_saveapi_post(type="reel"))
+
+        assert not Post.objects.exists()
 
     def test_existing_post_is_left_alone(self):
         """A post that is already stored keeps its owner and fields."""

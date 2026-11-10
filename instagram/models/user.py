@@ -98,6 +98,33 @@ class GetUserPostMixIn:
                 continue
             yield response
 
+    @staticmethod
+    def _get_post_type(response):
+        """Return the Post variant constant for a SaveAPI post response.
+
+        Args:
+            response (dict): SaveAPI /v1/download response
+
+        Returns:
+            str: Post.POST_VARIANT_CAROUSEL, Post.POST_VARIANT_VIDEO or
+            Post.POST_VARIANT_NORMAL
+
+        Raises:
+            ValueError: if the response type is missing or unknown
+        """
+        from .post import Post  # noqa: PLC0415
+
+        post_type = response.get("type") if isinstance(response, dict) else None
+        variants = {
+            "album": Post.POST_VARIANT_CAROUSEL,
+            "video": Post.POST_VARIANT_VIDEO,
+            "image": Post.POST_VARIANT_NORMAL,
+        }
+        if not isinstance(post_type, str) or post_type not in variants:
+            msg = f"Unknown post type: {post_type!r}"
+            raise ValueError(msg)
+        return variants[post_type]
+
     def save_post_from_saveapi(self, response):
         """Save one SaveAPI post detail response as a Post owned by this user.
 
@@ -113,6 +140,9 @@ class GetUserPostMixIn:
         Returns:
             Post | None: the new or existing post, or None if the response
             has no video_id
+
+        Raises:
+            ValueError: if the response has an unknown post type
         """
         from .post import Post  # noqa: PLC0415
 
@@ -135,10 +165,7 @@ class GetUserPostMixIn:
         )
         defaults = {
             "user": self,
-            "variant": {
-                "album": Post.POST_VARIANT_CAROUSEL,
-                "video": Post.POST_VARIANT_VIDEO,
-            }.get(response.get("type"), Post.POST_VARIANT_NORMAL),
+            "variant": self._get_post_type(response),
             "caption": meta.get("text") or "",
             "thumbnail_url": meta.get("thumbnail") or first_image_url or "",
             # credits is billing data, not post data.

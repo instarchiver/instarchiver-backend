@@ -12,6 +12,16 @@ This is a Django 5.2 REST API service for archiving Instagram content, built on 
 
 **CRITICAL**: Before creating plans (`/plan`), optimizing, refactoring, or implementing features, always check the frameworks/libraries and versions used in this project (`pyproject.toml` / `requirements.txt`) and query **Context7 MCP** (`resolve-library-id` -> `query-docs`) as the primary implementation reference.
 
+### Writing, Coding & Planning Guidelines
+
+- **Writing (`humanizer`)**: Always use the `humanizer` skill (`.agent/skills/humanizer/SKILL.md`) when writing or editing prose (documentation, docstrings, comments, commit messages, PR descriptions, changelogs, drf-spectacular `help_text`/`summary`/`description`, and user-facing messages). Write the text first, then run it through the humanizer before saving. Do not wrap names in double backticks in docstrings and comments.
+- **Coding (`ponytail`)**: Always use the `ponytail` skill (`.agent/skills/ponytail/SKILL.md`, level `full` by default) for coding work: writing, fixing, refactoring, reviewing, or designing code, and choosing dependencies. Keep it on unless the user says "stop ponytail" or "normal mode".
+- **Planning (`planning-and-task-breakdown` & `doubt-driven-development`)**:
+  - Write every plan in Indonesian (specs, task breakdowns, and revised plans). Everything committed to the repo stays in English.
+  - Run an evil reviewer pass before presenting or executing any plan using a fresh-context subagent with the `doubt-driven-development` skill (`.agent/skills/doubt-driven-development/SKILL.md`).
+  - The reviewer must verify every library or API claim against Context7 (`resolve-library-id` -> `query-docs`) and check concrete failure scenarios (empty/malformed inputs, duplicates/races, Celery retry idempotency, existing production rows/migrations, external API failures, permissions, and timezones/pagination).
+  - Fix valid findings, state 1-line reasons for rejected findings, and show the revised plan with a short summary of what the reviewer found.
+
 ## Development Environment
 
 ### Docker-First Development
@@ -192,7 +202,7 @@ class MyViewSet(viewsets.ModelViewSet):
 
 ### External API Integration
 
-**Always use the Core API client for external requests:**
+**Always use the centralized API clients (`core/utils/saveapi.py` or `core/utils/core_api.py`) for external requests:**
 
 ```python
 from core.utils.saveapi import fetch_user_profile
@@ -205,11 +215,11 @@ import requests
 response = requests.get(f"https://api.example.com/users/{username}")
 ```
 
-**Benefits of using Core API client:**
-- Automatic request/response logging to `APIRequestLog`
-- Centralized error handling
-- Timing and performance tracking
-- Configuration from database settings
+**SaveAPI client rules (`core/utils/saveapi.py`):**
+- Keep `core/utils/saveapi.py` dumb: it makes the request, logs to `APIRequestLog` (with `Authorization` masked), and raises a classified `SaveAPIError` (`code`, `status_code`, `retryable`, `retry_after`).
+- Never put cache writes, shared cooldown state (Redis/Django cache), or retry decisions inside `core/utils/saveapi.py`.
+- All retry, backoff, and rate-limit rescheduling logic belongs in the Celery task layer (`instagram/tasks/`). When SaveAPI returns a rate limit with `Retry-After`, the task reschedules itself with `apply_async(countdown=retry_after)` rather than using a shared cache cooldown.
+- For Telegram HTTP calls, always use `call_telegram_api()` in `telegram_bot/utils.py`, which masks the bot token in logs.
 
 ### Background Tasks with Celery
 
@@ -241,10 +251,11 @@ def my_task(self, param):
 - Operations that can fail and need retries
 - Background updates (profile pictures, stories)
 
-**Task naming:**
+**Task naming and priorities:**
 - Use descriptive names: `update_profile_picture_from_url`, not `update_pic`
-- Place in `app/tasks.py`
+- Place in `app/tasks.py` or `app/tasks/`
 - Auto-discovered by Celery from all installed apps
+- All tasks run on one worker with Redis message priorities enabled (0 is highest, default is 5). `telegram_bot` tasks must pass `priority=0` to `@shared_task` so bot replies skip ahead of the Instagram backlog.
 
 ## File Organization
 
