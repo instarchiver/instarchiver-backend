@@ -53,8 +53,8 @@ class PostListView(ListAPIView):
             ),
         )
 
-        # Order PostMedia by reference to ensure consistent ordering
-        ordered_postmedia = PostMedia.objects.order_by("-reference")
+        # Rows are inserted in carousel order, so id keeps that order
+        ordered_postmedia = PostMedia.objects.order_by("id")
 
         return (
             Post.objects.defer("raw_data", "embedding")
@@ -82,8 +82,8 @@ class PostDetailView(RetrieveAPIView):
             ),
         )
 
-        # Order PostMedia by created_at to ensure consistent ordering
-        ordered_postmedia = PostMedia.objects.order_by("-reference")
+        # Rows are inserted in carousel order, so id keeps that order
+        ordered_postmedia = PostMedia.objects.order_by("id")
 
         return Post.objects.defer("raw_data", "embedding").prefetch_related(
             Prefetch("user", queryset=annotated_users),
@@ -139,8 +139,8 @@ class PostAISearchView(ListAPIView):
             ),
         )
 
-        # Order PostMedia by reference to ensure consistent ordering
-        ordered_postmedia = PostMedia.objects.order_by("-reference")
+        # Rows are inserted in carousel order, so id keeps that order
+        ordered_postmedia = PostMedia.objects.order_by("id")
 
         # Generate embedding for search query
         query_embedding, _ = generate_text_embedding(search_query)
@@ -213,8 +213,8 @@ class PostSimilarView(ListAPIView):
             ),
         )
 
-        # Order PostMedia by reference to ensure consistent ordering
-        ordered_postmedia = PostMedia.objects.order_by("-reference")
+        # Rows are inserted in carousel order, so id keeps that order
+        ordered_postmedia = PostMedia.objects.order_by("id")
 
         # Find similar posts using L2Distance
         return (

@@ -6,6 +6,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 import requests
+from django.db import DatabaseError
 from django.db import models
 from django.db import transaction
 from django.utils import timezone
@@ -137,6 +138,9 @@ class GetUserPostMixIn:
         thumbnail_url is the URL of the first media item, image or video.
         Post.download_thumbnail cuts a frame when it is a video.
 
+        A new post and its PostMedia rows are saved in one transaction, so a
+        failure leaves neither behind.
+
         Args:
             response (dict): SaveAPI /v1/download response from
                 fetch_post_details()
@@ -147,6 +151,7 @@ class GetUserPostMixIn:
 
         Raises:
             ValueError: if the response has an unknown post type
+            DatabaseError: if the post or its media cannot be saved
         """
         from .post import Post  # noqa: PLC0415
 
@@ -179,15 +184,21 @@ class GetUserPostMixIn:
         if isinstance(published_at, (int, float)):
             defaults["post_created_at"] = datetime.fromtimestamp(published_at, tz=UTC)
 
-        post, _ = Post.objects.get_or_create(id=str(post_id), defaults=defaults)
+        with transaction.atomic():
+            post, created = Post.objects.get_or_create(
+                id=str(post_id),
+                defaults=defaults,
+            )
+            if created:
+                post.create_media()
         return post
 
     def update_posts_from_api(self):
         """Fetch and save each post in recent_posts from the API.
 
-        Posts with an unknown type are logged and skipped so one unsupported
-        item does not block the rest. Rate limits from fetch_post_details()
-        propagate so the caller can back off.
+        Posts with an unknown type, or that fail to save, are logged and
+        skipped so one bad item does not block the rest. Rate limits from
+        fetch_post_details() propagate so the caller can back off.
 
         Returns:
             list[Post]: posts from the response, new and existing
@@ -199,7 +210,7 @@ class GetUserPostMixIn:
         for response in self.fetch_post_details():
             try:
                 post = self.save_post_from_saveapi(response)
-            except ValueError as e:
+            except (ValueError, DatabaseError) as e:
                 logger.warning(
                     "Skipping post %s of user %s: %s",
                     response.get("video_id"),

@@ -11,6 +11,7 @@ from django.test import TestCase
 from PIL import Image
 
 from instagram.models import Post
+from instagram.models import PostMedia
 from instagram.tests.factories import InstagramUserFactory
 from instagram.tests.factories import PostFactory
 from instagram.tests.factories import PostMediaFactory
@@ -431,3 +432,134 @@ class TestPostGenerateEmbedding(TestCase):
 
         with pytest.raises(requests.RequestException):
             post.generate_embedding()
+
+
+def _medias():
+    return [
+        {
+            "type": "image",
+            "url": "https://cdn.example.com/a.jpg",
+            "width": "720",
+            "height": 900,
+        },
+        "not-a-dict",
+        {"type": "image"},
+        {
+            "type": "video",
+            "url": "https://cdn.example.com/b.mp4",
+            "width": 0,
+            "height": None,
+        },
+    ]
+
+
+class TestPostCreateMedia(TestCase):
+    """Tests for the Post.create_media method."""
+
+    def test_creates_rows_in_media_order(self):
+        """Usable items become rows keyed by index, with ids in that order."""
+        post = PostFactory(raw_data={"medias": _medias()})
+
+        assert post.create_media() == 2  # noqa: PLR2004
+
+        rows = list(PostMedia.objects.filter(post=post).order_by("id"))
+        assert [row.reference for row in rows] == ["0", "3"]
+        image, video = rows
+        assert image.thumbnail_url == image.media_url == "https://cdn.example.com/a.jpg"
+        assert (image.width, image.height) == (720, 900)
+        assert video.thumbnail_url == ""
+        assert video.media_url == "https://cdn.example.com/b.mp4"
+        assert (video.width, video.height) == (None, None)
+
+    def test_second_call_adds_nothing(self):
+        """Existing rows are skipped."""
+        post = PostFactory(raw_data={"medias": _medias()})
+        post.create_media()
+
+        post.create_media()
+
+        assert PostMedia.objects.filter(post=post).count() == 2  # noqa: PLR2004
+
+    def test_without_medias_returns_zero(self):
+        """raw_data without a medias list creates nothing."""
+        for raw_data in (None, {}, {"medias": None}):
+            post = PostFactory(raw_data=raw_data)
+
+            assert post.create_media() == 0
+            assert not PostMedia.objects.filter(post=post).exists()
+
+
+class TestPostMediaDownloadMedia(TestCase):
+    """Tests for the PostMedia.download_media method."""
+
+    def setUp(self):
+        self.storage = InMemoryStorage()
+        patcher = patch.object(
+            PostMedia._meta.get_field("media"),  # noqa: SLF001
+            "storage",
+            self.storage,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_downloads_and_saves_name(self, mock_download):
+        """The file is stored as is and its name written to the row."""
+        mock_download.return_value = (b"video-bytes", "mp4")
+        post_media = PostMediaFactory()
+
+        saved_name = post_media.download_media()
+
+        assert saved_name.endswith(".mp4")
+        assert PostMedia.objects.get(pk=post_media.pk).media.name == saved_name
+        mock_download.assert_called_once_with(post_media.media_url)
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_saves_size_from_the_file(self, mock_download):
+        """width and height come from the downloaded file."""
+        mock_download.return_value = (_make_video_bytes(), "mp4")
+        post_media = PostMediaFactory(width=None, height=None)
+
+        post_media.download_media()
+
+        post_media.refresh_from_db()
+        assert (post_media.width, post_media.height) == (32, 32)
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_unreadable_file_keeps_saveapi_size(self, mock_download):
+        """When the size cannot be read, the SaveAPI values stay."""
+        mock_download.return_value = (b"not media", "bin")
+        post_media = PostMediaFactory(width=720, height=1280)
+
+        post_media.download_media()
+
+        post_media.refresh_from_db()
+        assert (post_media.width, post_media.height) == (720, 1280)
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_skips_without_url_existing_file_or_failure(self, mock_download):
+        """Nothing is saved without a URL, with a file, or when download fails."""
+        assert PostMediaFactory(media_url="").download_media() is None
+        existing = PostMediaFactory()
+        existing.media.name = "posts/x/a.mp4"
+        assert existing.download_media() is None
+        mock_download.assert_not_called()
+
+        mock_download.return_value = (None, None)
+        failed = PostMediaFactory()
+        assert failed.download_media() is None
+        assert not PostMedia.objects.get(pk=failed.pk).media
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_loser_of_race_deletes_its_file(self, mock_download):
+        """If another worker saved a file first, the new file is removed."""
+        mock_download.return_value = (b"video-bytes", "mp4")
+        post_media = PostMediaFactory()
+        PostMedia.objects.filter(pk=post_media.pk).update(media="posts/x/winner.mp4")
+
+        assert post_media.download_media() is None
+        assert (
+            PostMedia.objects.get(pk=post_media.pk).media.name == "posts/x/winner.mp4"
+        )
+        _, files = self.storage.listdir(f"posts/{post_media.post.user.username}")
+        assert files == []

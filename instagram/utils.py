@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 import av
 import requests
+from PIL import Image as PILImage
 from rest_framework import status
 
 from core.utils.openrouter import classify
@@ -68,6 +69,44 @@ def generate_blur_data_url_from_image(img, resize_percentage=0.02):
     buffer = BytesIO()
     img.convert("RGB").resize(new_size).save(buffer, format="JPEG")
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+# EXIF Orientation values that turn the picture by 90 degrees.
+ROTATED_EXIF_ORIENTATIONS = {5, 6, 7, 8}
+
+
+def get_media_size(content):
+    """Return the width and height of image or video bytes.
+
+    Images are tried first, so AVIF/HEIC (which also start with an ftyp box)
+    are not read as video. An image turned by EXIF reports the size it is
+    shown at. Videos are read from the stream header without decoding.
+
+    shortcut: video rotation metadata is ignored, so a rotated phone video
+    reports its stored size; read the display matrix if that matters.
+
+    Args:
+        content (bytes): the downloaded file
+
+    Returns:
+        tuple: (width, height) as ints, or (None, None) if unreadable
+    """
+    try:
+        with PILImage.open(BytesIO(content)) as img:
+            width, height = img.size
+            if img.getexif().get(0x0112) in ROTATED_EXIF_ORIENTATIONS:
+                width, height = height, width
+            return width, height
+    except (OSError, ValueError):
+        pass
+
+    try:
+        with av.open(BytesIO(content)) as container:
+            codec = container.streams.video[0].codec_context
+            return codec.width, codec.height
+    except (av.error.FFmpegError, IndexError, ValueError):
+        logger.warning("Could not read the size of the downloaded media")
+        return None, None
 
 
 def extract_video_frame(file_obj, at_seconds: float = 1.0) -> bytes | None:

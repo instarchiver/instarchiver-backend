@@ -5,14 +5,20 @@ from django.test import TestCase
 from django.utils import timezone
 
 from instagram.models import Post
+from instagram.models import PostMedia
+from instagram.tasks import create_post_media
+from instagram.tasks import download_post_media_from_url
 from instagram.tasks import download_post_thumbnail_from_url
 from instagram.tasks import generate_post_embedding
 from instagram.tasks import increment_post_view_count
+from instagram.tasks import periodic_create_post_media
+from instagram.tasks import periodic_download_post_media
 from instagram.tasks import periodic_download_post_thumbnails
 from instagram.tasks import periodic_generate_post_embeddings
 from instagram.tasks import periodic_process_post_thumbnails
 from instagram.tasks import process_post_thumbnail
 from instagram.tests.factories import PostFactory
+from instagram.tests.factories import PostMediaFactory
 
 
 class TestIncrementPostViewCount(TestCase):
@@ -176,3 +182,81 @@ class TestPeriodicGeneratePostEmbeddings(TestCase):
 
         queued = {call.args[0] for call in mock_delay.call_args_list}
         assert queued == {posts[0].pk, posts[1].pk}
+
+
+MEDIAS = {"medias": [{"type": "image", "url": "https://cdn.example.com/a.jpg"}]}
+
+
+class TestCreatePostMedia(TestCase):
+    def test_creates_rows_for_post_that_needs_them(self):
+        post = PostFactory(raw_data=MEDIAS)
+
+        result = create_post_media(post.id)
+
+        assert result["created"] is True
+        assert result["media_count"] == 1
+        assert PostMedia.objects.filter(post=post).count() == 1
+
+    @patch("instagram.models.Post.create_media")
+    def test_skips_posts_without_usable_media_or_with_rows(self, mock_create):
+        has_rows = PostFactory(raw_data=MEDIAS)
+        PostMediaFactory(post=has_rows)
+        empty = PostFactory(raw_data={"medias": []})
+        no_url = PostFactory(raw_data={"medias": [{"type": "image", "url": ""}]})
+
+        for post_id in ("does-not-exist", has_rows.id, empty.id, no_url.id):
+            assert create_post_media(post_id)["created"] is False
+        mock_create.assert_not_called()
+
+
+class TestDownloadPostMediaFromUrl(TestCase):
+    @patch("instagram.models.PostMedia.download_media", return_value="posts/x/a.mp4")
+    def test_downloads_media(self, mock_download):
+        post_media = PostMediaFactory()
+
+        result = download_post_media_from_url(post_media.id)
+
+        assert result == {
+            "success": True,
+            "post_media_id": post_media.id,
+            "downloaded": True,
+        }
+        mock_download.assert_called_once()
+
+    def test_missing_post_media(self):
+        result = download_post_media_from_url(999999)
+
+        assert result == {"success": False, "error": "PostMedia not found"}
+
+
+class TestPeriodicCreatePostMedia(TestCase):
+    @patch("instagram.tasks.post.create_post_media.delay")
+    def test_queues_only_posts_with_usable_media_and_no_rows(self, mock_delay):
+        needs = PostFactory(raw_data=MEDIAS)
+        has_rows = PostFactory(raw_data=MEDIAS)
+        PostMediaFactory(post=has_rows)
+        PostFactory(raw_data={"medias": []})
+        PostFactory(raw_data={"medias": None})
+        PostFactory(raw_data={"medias": [{"type": "image", "url": ""}]})
+        PostFactory(raw_data=None)
+
+        periodic_create_post_media()
+
+        mock_delay.assert_called_once_with(needs.pk)
+
+
+class TestPeriodicDownloadPostMedia(TestCase):
+    @patch("instagram.tasks.post.download_post_media_from_url.delay")
+    def test_queues_only_recent_media_without_file(self, mock_delay):
+        recent = PostMediaFactory()
+        with_file = PostMediaFactory()
+        PostMedia.objects.filter(pk=with_file.pk).update(media="posts/x/a.mp4")
+        PostMediaFactory(media_url="")
+        old = PostMediaFactory()
+        Post.objects.filter(pk=old.post.pk).update(
+            created_at=timezone.now() - timedelta(days=8),
+        )
+
+        periodic_download_post_media()
+
+        mock_delay.assert_called_once_with(recent.pk)

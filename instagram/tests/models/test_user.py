@@ -5,10 +5,12 @@ from unittest.mock import patch
 import pytest
 import requests
 from django.core.exceptions import ImproperlyConfigured
+from django.db import DatabaseError
 from django.test import TestCase
 
 from core.utils.saveapi import SaveAPIError
 from instagram.models import Post
+from instagram.models import PostMedia
 from instagram.models import Story
 from instagram.models import User
 from instagram.models.story import UserUpdateStoryLog
@@ -399,6 +401,36 @@ class TestUserSavePostFromSaveapi(TestCase):
 
             assert post.thumbnail_url == ""
 
+    def test_new_post_gets_its_media(self):
+        """A new post is saved together with its PostMedia rows."""
+        user = InstagramUserFactory()
+
+        post = user.save_post_from_saveapi(_saveapi_post())
+
+        media = PostMedia.objects.get(post=post)
+        assert media.reference == "0"
+        assert media.media_url == "https://cdn.example.com/full.jpg"
+
+    def test_existing_post_gets_no_media(self):
+        """An existing post is left alone, media included."""
+        PostFactory(id="4027001720088057574")
+        user = InstagramUserFactory()
+
+        user.save_post_from_saveapi(_saveapi_post())
+
+        assert not PostMedia.objects.exists()
+
+    @patch("instagram.models.Post.create_media", side_effect=DatabaseError("boom"))
+    def test_media_failure_rolls_back_the_post(self, mock_create):
+        """If the media cannot be saved, the post is not saved either."""
+        user = InstagramUserFactory()
+
+        with pytest.raises(DatabaseError):
+            user.save_post_from_saveapi(_saveapi_post())
+
+        mock_create.assert_called_once()
+        assert not Post.objects.exists()
+
     def test_missing_video_id_returns_none(self):
         """A response without video_id saves nothing."""
         user = InstagramUserFactory()
@@ -442,6 +474,30 @@ class TestUserUpdatePostsFromApi(TestCase):
 
         assert [post.id for post in saved] == ["103"]
         assert saved[0].variant == Post.POST_VARIANT_CAROUSEL
+
+    @patch("instagram.models.user.User.fetch_post_details")
+    def test_database_error_skips_only_that_post(self, mock_details):
+        """A post whose media fails to save is skipped; later posts are saved."""
+        user = InstagramUserFactory()
+        mock_details.return_value = iter(
+            [
+                _saveapi_post(video_id="101", type="image"),
+                _saveapi_post(video_id="102", type="image"),
+            ],
+        )
+        original = Post.create_media
+
+        def fail_first(post):
+            if post.id == "101":
+                msg = "boom"
+                raise DatabaseError(msg)
+            return original(post)
+
+        with patch("instagram.models.Post.create_media", fail_first):
+            saved = user.update_posts_from_api()
+
+        assert [post.id for post in saved] == ["102"]
+        assert list(Post.objects.values_list("id", flat=True)) == ["102"]
 
     @patch("instagram.models.user.User.fetch_post_details")
     def test_rate_limit_propagates(self, mock_details):

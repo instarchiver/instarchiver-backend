@@ -1,6 +1,5 @@
-from instagram.models import User
+from instagram.tasks.post import generate_post_embedding
 
 
 def run():
-    user = User.objects.get(username="dota_2")
-    user.update_stories_from_saveapi()
+    print(generate_post_embedding("4026897407873583016"))  # noqa: T201
