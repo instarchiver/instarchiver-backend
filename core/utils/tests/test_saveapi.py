@@ -149,6 +149,20 @@ class TestSaveAPIDownload(TestCase):
         assert log.request_headers["Authorization"] == "***"
         assert "sk_live_test" not in str(log.request_headers)
 
+    @patch("requests.Session.request")
+    def test_fetch_post_detail_asks_for_full_meta(self, mock_request):
+        mock_request.return_value = _mock_response(json_data={"success": True})
+
+        result = saveapi.fetch_post_detail("https://www.instagram.com/p/abc/")
+
+        assert result == {"success": True}
+        kwargs = mock_request.call_args.kwargs
+        assert kwargs["url"] == "https://api.saveapi.org/v1/download"
+        assert kwargs["params"] == {
+            "url": "https://www.instagram.com/p/abc/",
+            "full_meta": "true",
+        }
+
     @patch("core.utils.saveapi.download")
     def test_fetch_user_stories_builds_story_url(self, mock_download):
         mock_download.return_value = {"success": True, "medias": []}

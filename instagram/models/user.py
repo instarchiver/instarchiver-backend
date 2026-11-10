@@ -3,12 +3,14 @@ import logging
 import uuid
 from urllib.parse import urlparse
 
+import requests
 from django.db import models
 from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from core.utils.saveapi import RETRYABLE_ERROR_CODES
 from core.utils.saveapi import SaveAPIError
+from core.utils.saveapi import fetch_post_detail
 from core.utils.saveapi import fetch_user_profile
 from core.utils.saveapi import fetch_user_stories as fetch_user_stories_from_saveapi
 from instagram.constants import PROFILE_DUPLICATE_ACCOUNT
@@ -44,6 +46,53 @@ class GetUserPostMixIn:
             for post in recent_posts
             if isinstance(post, dict)
         ]
+
+    def fetch_post_details(self):
+        """Fetch full post details from SaveAPI for each post in get_post_urls().
+
+        Each post costs one SaveAPI request. A post that fails (an error
+        response, a timeout or a 5xx) is logged and skipped, not retried, so
+        one bad post doesn't lose the rest. Rate limits are raised so the
+        caller can back off and try again later.
+
+        Returns:
+            list[dict]: SaveAPI responses for the posts that were fetched
+
+        Raises:
+            SaveAPIError: if SaveAPI rate limits the request
+        """
+        details = []
+        for post in self.get_post_urls():
+            url = post["url"]
+            if not url:
+                continue
+            try:
+                response = fetch_post_detail(url)
+                if not isinstance(response, dict):
+                    logger.warning(
+                        "Skipping post %s of user %s: response is not an object",
+                        url,
+                        self.username,
+                    )
+                    continue
+                if not response.get("success"):
+                    error = response.get("error") or {}
+                    code = error.get("code") or "UNKNOWN"
+                    raise SaveAPIError(  # noqa: TRY301
+                        code,
+                        error.get("message") or "no error message",
+                        retryable=code in RETRYABLE_ERROR_CODES,
+                    )
+            except SaveAPIError as e:
+                if e.is_rate_limited:
+                    raise
+                logger.warning("Skipping post %s of user %s: %s", url, self.username, e)
+                continue
+            except requests.RequestException as e:
+                logger.warning("Skipping post %s of user %s: %s", url, self.username, e)
+                continue
+            details.append(response)
+        return details
 
 
 class GetUserStoryMixIn:

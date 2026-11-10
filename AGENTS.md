@@ -39,6 +39,18 @@ Every plan gets an evil reviewer pass before it is presented or executed. This c
 
 The evil reviewer is a fresh-context subagent run through the `agent-skills:doubt-driven-development` skill. Give it the plan and the relevant code, and tell it to attack the plan: wrong assumptions about the codebase, missing steps, migrations or data that could break, Celery/signal side effects, security holes, and simpler alternatives that were skipped.
 
+The reviewer checks every library or API claim in the plan against Context7 (`resolve-library-id`, then `query-docs`) before accepting it. That covers Django, DRF, Celery, drf-spectacular, Stripe, the OpenAI SDK, and any external API the plan calls. Write this into the reviewer's prompt instead of relying on it to pick up this file. A claim that contradicts the docs is a finding, and so is one Context7 can't confirm. If Context7 isn't available, the reviewer says so in its report.
+
+The reviewer also hunts for edge cases the plan doesn't handle, and each finding names the input or state that breaks it. A finding without a concrete failure scenario gets dropped. Check at least:
+
+- empty, null, or malformed input, including external API responses with missing fields
+- duplicates and races: two workers or requests on the same row, a webhook or Telegram update delivered twice, unique constraints
+- Celery retries: whether the task is idempotent, what a failure halfway through leaves behind, and what happens when the task runs again
+- existing production rows that don't fit the new schema or code path, and whether the migration can be reversed
+- external failures: timeouts, rate limits, and 4xx/5xx responses from SaveAPI, the Core API, Telegram, Stripe, and OpenAI
+- permissions: who can reach the new code path, and whether it can expose another user's data
+- timezones, large tables, and pagination, where the plan touches them
+
 After the review:
 
 - Fix the plan for every valid finding.

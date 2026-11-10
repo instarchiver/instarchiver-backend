@@ -1,6 +1,8 @@
 from unittest.mock import patch
 
 import pytest
+import requests
+from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase
 
 from core.utils.saveapi import SaveAPIError
@@ -179,6 +181,84 @@ class TestUserGetPostUrls(TestCase):
             raw_api_data={"recent_posts": ["junk", None, {"id": "1"}]},
         )
         assert user.get_post_urls() == [{"url": None, "id": "1", "shortcode": None}]
+
+
+def _recent_posts(*urls):
+    return {
+        "recent_posts": [
+            {"id": str(i), "shortcode": f"code{i}", "url": url}
+            for i, url in enumerate(urls)
+        ],
+    }
+
+
+@patch("instagram.models.user.fetch_post_detail")
+class TestUserFetchPostDetails(TestCase):
+    """Tests for the User.fetch_post_details method."""
+
+    def test_returns_response_for_each_post(self, mock_fetch):
+        """Each post url is fetched and its response returned in order."""
+        user = InstagramUserFactory(raw_api_data=_recent_posts("u1", "u2"))
+        mock_fetch.side_effect = [
+            {"success": True, "id": "a"},
+            {"success": True, "id": "b"},
+        ]
+
+        assert user.fetch_post_details() == [
+            {"success": True, "id": "a"},
+            {"success": True, "id": "b"},
+        ]
+        assert [c.args[0] for c in mock_fetch.call_args_list] == ["u1", "u2"]
+
+    def test_post_without_url_is_not_fetched(self, mock_fetch):
+        """A post with no url never reaches SaveAPI."""
+        user = InstagramUserFactory(raw_api_data={"recent_posts": [{"id": "1"}]})
+
+        assert user.fetch_post_details() == []
+        mock_fetch.assert_not_called()
+
+    def test_failed_posts_are_skipped(self, mock_fetch):
+        """Error bodies, non-dict bodies, SaveAPI errors and timeouts are skipped."""
+        user = InstagramUserFactory(
+            raw_api_data=_recent_posts("u1", "u2", "u3", "u4", "u5"),
+        )
+        mock_fetch.side_effect = [
+            {"success": False, "error": {"code": "NOT_FOUND"}},
+            ["not", "a", "dict"],
+            SaveAPIError("HTTP_502", "bad gateway", status_code=502),
+            requests.Timeout("slow"),
+            {"success": True, "id": "ok"},
+        ]
+
+        assert user.fetch_post_details() == [{"success": True, "id": "ok"}]
+        assert mock_fetch.call_count == 5  # noqa: PLR2004
+
+    def test_http_rate_limit_is_raised(self, mock_fetch):
+        """A 429 stops the loop so the caller can back off."""
+        user = InstagramUserFactory(raw_api_data=_recent_posts("u1", "u2"))
+        mock_fetch.side_effect = SaveAPIError("HTTP_429", "slow down", status_code=429)
+
+        with pytest.raises(SaveAPIError) as exc_info:
+            user.fetch_post_details()
+
+        assert exc_info.value.is_rate_limited
+        mock_fetch.assert_called_once()
+
+    def test_body_rate_limit_is_raised(self, mock_fetch):
+        """A RATE_LIMITED error body is raised even without a 429."""
+        user = InstagramUserFactory(raw_api_data=_recent_posts("u1"))
+        mock_fetch.return_value = {"success": False, "error": {"code": "RATE_LIMITED"}}
+
+        with pytest.raises(SaveAPIError, match="RATE_LIMITED"):
+            user.fetch_post_details()
+
+    def test_missing_configuration_is_raised(self, mock_fetch):
+        """Missing SaveAPI settings are not swallowed as a per-post failure."""
+        user = InstagramUserFactory(raw_api_data=_recent_posts("u1"))
+        mock_fetch.side_effect = ImproperlyConfigured("no key")
+
+        with pytest.raises(ImproperlyConfigured):
+            user.fetch_post_details()
 
 
 class TestUserUpdateProfileFromApi(TestCase):
