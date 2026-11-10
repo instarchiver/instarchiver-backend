@@ -125,6 +125,62 @@ class TestUserExtractApiData(TestCase):
         assert user.username == "unchanged"
 
 
+class TestUserGetPostUrls(TestCase):
+    """Tests for the User.get_post_urls method."""
+
+    def test_returns_url_id_and_shortcode(self):
+        """Each recent post comes back with only url, id and shortcode."""
+        user = InstagramUserFactory(
+            raw_api_data={
+                "recent_posts": [
+                    {
+                        "id": "4026662792306603741",
+                        "shortcode": "DfhlHm1t7bd",
+                        "url": "https://www.instagram.com/p/DfhlHm1t7bd/",
+                        "type": "video",
+                        "likes": 1299,
+                    },
+                    {
+                        "id": "4026631408862937765",
+                        "shortcode": "Dfhd-6utMKl",
+                        "url": "https://www.instagram.com/p/Dfhd-6utMKl/",
+                        "type": "image",
+                    },
+                ],
+            },
+        )
+        assert user.get_post_urls() == [
+            {
+                "url": "https://www.instagram.com/p/DfhlHm1t7bd/",
+                "id": "4026662792306603741",
+                "shortcode": "DfhlHm1t7bd",
+            },
+            {
+                "url": "https://www.instagram.com/p/Dfhd-6utMKl/",
+                "id": "4026631408862937765",
+                "shortcode": "Dfhd-6utMKl",
+            },
+        ]
+
+    def test_empty_when_raw_api_data_is_none(self):
+        """No raw data means no posts."""
+        user = InstagramUserFactory(raw_api_data=None)
+        assert user.get_post_urls() == []
+
+    def test_empty_when_recent_posts_is_not_a_list(self):
+        """A missing, null or non-list recent_posts returns an empty list."""
+        for raw in ({}, {"recent_posts": None}, {"recent_posts": {"id": "1"}}):
+            user = InstagramUserFactory(raw_api_data=raw)
+            assert user.get_post_urls() == []
+
+    def test_skips_non_dict_items_and_keeps_missing_keys_as_none(self):
+        """Non-dict items are skipped and a missing key comes back as None."""
+        user = InstagramUserFactory(
+            raw_api_data={"recent_posts": ["junk", None, {"id": "1"}]},
+        )
+        assert user.get_post_urls() == [{"url": None, "id": "1", "shortcode": None}]
+
+
 class TestUserUpdateProfileFromApi(TestCase):
     """Tests for the User.update_profile_from_api method."""
 

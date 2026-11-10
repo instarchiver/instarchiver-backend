@@ -22,6 +22,29 @@ logger = logging.getLogger(__name__)
 class GetUserPostMixIn:
     """Mixin class to add post-related functionality to User model."""
 
+    def get_post_urls(self):
+        """Return the url, id and shortcode of each post in recent_posts.
+
+        recent_posts comes from the SaveAPI profile response stored in
+        raw_api_data. A missing key comes back as None.
+
+        Returns:
+            list[dict]: one dict per post with url, id and shortcode keys
+        """
+        raw = self.raw_api_data
+        recent_posts = raw.get("recent_posts") if isinstance(raw, dict) else None
+        if not isinstance(recent_posts, list):
+            return []
+        return [
+            {
+                "url": post.get("url"),
+                "id": post.get("id"),
+                "shortcode": post.get("shortcode"),
+            }
+            for post in recent_posts
+            if isinstance(post, dict)
+        ]
+
 
 class GetUserStoryMixIn:
     """Mixin class to add story-related functionality to User model."""
