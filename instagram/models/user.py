@@ -147,6 +147,7 @@ class GetUserPostMixIn:
         from .post import Post  # noqa: PLC0415
 
         post_id = response.get("video_id")
+        thumbnail_url = response.get("meta", {}).get("thumbnail")
         if not post_id:
             logger.warning(
                 "Skipping post of user %s: response has no video_id",
@@ -155,19 +156,11 @@ class GetUserPostMixIn:
             return None
 
         meta = response.get("meta") or {}
-        first_image_url = next(
-            (
-                media.get("url")
-                for media in response.get("medias") or []
-                if isinstance(media, dict) and media.get("type") == "image"
-            ),
-            None,
-        )
         defaults = {
             "user": self,
             "variant": self._get_post_type(response),
             "caption": meta.get("text") or "",
-            "thumbnail_url": meta.get("thumbnail") or first_image_url or "",
+            "thumbnail_url": thumbnail_url,
             # credits is billing data, not post data.
             "raw_data": {
                 key: value for key, value in response.items() if key != "credits"
