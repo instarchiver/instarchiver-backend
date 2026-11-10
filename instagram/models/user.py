@@ -270,12 +270,9 @@ class User(GetUserPostMixIn, GetUserStoryMixIn, ViewCountMixin):
 
         self._check_profile_conflicts(response)
 
-        # recent_posts holds signed URLs that change on every request, which
-        # would bloat the history table, and credits is billing data.
+        # credits is billing data, not profile data.
         self.raw_api_data = {
-            key: value
-            for key, value in response.items()
-            if key not in {"credits", "recent_posts"}
+            key: value for key, value in response.items() if key != "credits"
         }
         self._extract_api_data_from_saveapi(response)
         self.api_updated_at = timezone.now()

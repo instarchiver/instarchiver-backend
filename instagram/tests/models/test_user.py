@@ -142,7 +142,7 @@ class TestUserUpdateProfileFromApi(TestCase):
         assert user.follower_count == 5000  # noqa: PLR2004
         assert user.api_updated_at is not None
         assert "credits" not in user.raw_api_data
-        assert "recent_posts" not in user.raw_api_data
+        assert user.raw_api_data["recent_posts"] == [{"id": "1", "shortcode": "abc"}]
         assert user.raw_api_data["id"] == "111"
 
     @patch("instagram.models.user.fetch_user_profile")
