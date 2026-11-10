@@ -481,7 +481,6 @@ class TestPostCaption(TestCase):
             "taken_at": 1234567890,
         }
 
-        # Simulate what happens in User._update_post_data_from_api
         obj, _ = Post.objects.update_or_create(
             id=raw_data.get("pk"),
             user=user,
@@ -509,7 +508,6 @@ class TestPostCaption(TestCase):
             "taken_at": 1234567890,
         }
 
-        # Simulate what happens in User._update_post_data_from_api
         obj, _ = Post.objects.update_or_create(
             id=raw_data.get("pk"),
             user=user,
@@ -538,7 +536,6 @@ class TestPostCaption(TestCase):
             "taken_at": 1234567890,
         }
 
-        # Simulate what happens in User._update_post_data_from_api
         obj, _ = Post.objects.update_or_create(
             id=raw_data.get("pk"),
             user=user,

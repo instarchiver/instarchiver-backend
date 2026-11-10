@@ -221,7 +221,6 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 - All requests include timing, status, headers, and error tracking
 
 **Instagram API Utilities** ([core/utils/instagram_api.py](core/utils/instagram_api.py)):
-- `fetch_user_posts_by_username()` - Get a page of posts by Instagram user ID
 - `fetch_post_by_id()` - Get a single post by ID
 - All functions use the Core API client under the hood
 
