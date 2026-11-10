@@ -47,6 +47,9 @@ NEEDS_POST_MEDIA = Q(
     raw_data__medias__0__url="",
 )
 
+# PostMedia rows whose stored media file has no thumbnail yet.
+NEEDS_MEDIA_THUMBNAIL = Q(media__gt="") & (Q(thumbnail="") | Q(thumbnail__isnull=True))
+
 
 def _positive_int(value):
     """Return value as an int if it is a positive number, else None.
@@ -448,4 +451,89 @@ class PostMedia(models.Model):
             "success": True,
             "post_media_id": post_media_id,
             "downloaded": bool(saved_name),
+        }
+
+    def generate_thumbnail(self):
+        """Fill thumbnail from the stored media file.
+
+        An image is its own thumbnail, so thumbnail points at the media file
+        and nothing is uploaded. For a video, one frame is stored as a JPEG.
+        The file is tried as an image first, so a video saved as .bin is not
+        stored as an image. The name is written with a conditional queryset
+        update; a frame uploaded by a worker that lost the race is deleted.
+        The upload path reads post.user.username, so load post__user before
+        calling.
+
+        Returns:
+            str or None: thumbnail file name, or None if nothing was saved
+        """
+        if not self.media or self.thumbnail:
+            return None
+
+        frame = None
+        try:
+            with self.media.open("rb") as media_file:
+                try:
+                    with PILImage.open(media_file):
+                        is_image = True
+                except (OSError, ValueError):
+                    is_image = False
+                if not is_image:
+                    media_file.seek(0)
+                    frame = extract_video_frame(media_file)
+        except FileNotFoundError:
+            logger.warning("Media file of post media %s is missing", self.pk)
+            return None
+
+        if is_image:
+            self.thumbnail.name = self.media.name
+        elif frame:
+            self.thumbnail.save(f"{uuid.uuid4()}.jpg", ContentFile(frame), save=False)
+        else:
+            logger.warning("No thumbnail could be made for post media %s", self.pk)
+            return None
+
+        updated = (
+            PostMedia.objects.filter(pk=self.pk)
+            .filter(Q(thumbnail="") | Q(thumbnail__isnull=True))
+            .update(thumbnail=self.thumbnail.name)
+        )
+        if not updated:
+            if not is_image:
+                self.thumbnail.delete(save=False)
+            return None
+        logger.info("Generated thumbnail for post media %s", self.pk)
+        return self.thumbnail.name
+
+    @classmethod
+    def generate_thumbnail_by_id(cls, post_media_id):
+        """Run generate_thumbnail on a PostMedia row that still needs one.
+
+        A row that is missing, has no media file or already has a thumbnail
+        returns without touching storage.
+
+        Returns:
+            dict: success (bool), post_media_id and generated (bool)
+        """
+        post_media = (
+            cls.objects.select_related("post__user")
+            .only(
+                "id",
+                "media",
+                "thumbnail",
+                "post__id",
+                "post__user__uuid",
+                "post__user__username",
+            )
+            .filter(NEEDS_MEDIA_THUMBNAIL, id=post_media_id)
+            .first()
+        )
+        if post_media is None:
+            return {"success": True, "post_media_id": post_media_id, "generated": False}
+
+        name = post_media.generate_thumbnail()
+        return {
+            "success": True,
+            "post_media_id": post_media_id,
+            "generated": bool(name),
         }

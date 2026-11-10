@@ -563,3 +563,88 @@ class TestPostMediaDownloadMedia(TestCase):
         )
         _, files = self.storage.listdir(f"posts/{post_media.post.user.username}")
         assert files == []
+
+
+class TestPostMediaGenerateThumbnail(TestCase):
+    """Tests for the PostMedia.generate_thumbnail method."""
+
+    def setUp(self):
+        self.storage = InMemoryStorage()
+        for field in ("media", "thumbnail"):
+            patcher = patch.object(
+                PostMedia._meta.get_field(field),  # noqa: SLF001
+                "storage",
+                self.storage,
+            )
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _with_media(self, content, name):
+        post_media = PostMediaFactory()
+        post_media.media.save(name, ContentFile(content), save=False)
+        PostMedia.objects.filter(pk=post_media.pk).update(media=post_media.media.name)
+        return post_media
+
+    def _jpeg(self):
+        buffer = BytesIO()
+        Image.new("RGB", (20, 10)).save(buffer, "JPEG")
+        return buffer.getvalue()
+
+    def _stored_files(self, post_media):
+        return self.storage.listdir(f"posts/{post_media.post.user.username}")[1]
+
+    def test_image_is_its_own_thumbnail(self):
+        """An image row points thumbnail at the media file without a new upload."""
+        post_media = self._with_media(self._jpeg(), "a.jpg")
+
+        name = post_media.generate_thumbnail()
+
+        assert name == post_media.media.name
+        assert PostMedia.objects.get(pk=post_media.pk).thumbnail.name == name
+        assert len(self._stored_files(post_media)) == 1
+
+    def test_video_gets_a_jpeg_frame(self):
+        """A video, even one stored as .bin, gets one JPEG frame as thumbnail."""
+        for name in ("clip.mp4", "clip.bin"):
+            post_media = self._with_media(_make_video_bytes(), name)
+
+            thumbnail = post_media.generate_thumbnail()
+
+            assert thumbnail.endswith(".jpg")
+            with self.storage.open(thumbnail) as stored:
+                assert Image.open(stored).format == "JPEG"
+
+    def test_skips_without_media_or_with_thumbnail(self):
+        """Nothing happens without a media file or when a thumbnail exists."""
+        assert PostMediaFactory().generate_thumbnail() is None
+        post_media = self._with_media(self._jpeg(), "a.jpg")
+        post_media.thumbnail.name = "posts/x/existing.jpg"
+        assert post_media.generate_thumbnail() is None
+
+    def test_unreadable_file_saves_nothing(self):
+        """A file that is neither an image nor a decodable video is left alone."""
+        post_media = self._with_media(b"not media", "a.bin")
+
+        assert post_media.generate_thumbnail() is None
+        assert not PostMedia.objects.get(pk=post_media.pk).thumbnail
+
+    def test_missing_file_returns_none(self):
+        """A media name whose file is gone from storage does not raise."""
+        post_media = PostMediaFactory()
+        PostMedia.objects.filter(pk=post_media.pk).update(media="posts/x/gone.mp4")
+        post_media.refresh_from_db()
+
+        assert post_media.generate_thumbnail() is None
+
+    def test_lost_race_deletes_only_the_new_frame(self):
+        """A frame uploaded by the losing worker is deleted; media files stay."""
+        video = self._with_media(_make_video_bytes(), "clip.mp4")
+        image = self._with_media(self._jpeg(), "a.jpg")
+        for row in (video, image):
+            PostMedia.objects.filter(pk=row.pk).update(thumbnail="posts/x/winner.jpg")
+
+        assert video.generate_thumbnail() is None
+        assert image.generate_thumbnail() is None
+        assert self.storage.exists(video.media.name)
+        assert self.storage.exists(image.media.name)
+        assert len(self._stored_files(video)) == 1

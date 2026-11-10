@@ -10,11 +10,13 @@ from instagram.tasks import create_post_media
 from instagram.tasks import download_post_media_from_url
 from instagram.tasks import download_post_thumbnail_from_url
 from instagram.tasks import generate_post_embedding
+from instagram.tasks import generate_post_media_thumbnail
 from instagram.tasks import increment_post_view_count
 from instagram.tasks import periodic_create_post_media
 from instagram.tasks import periodic_download_post_media
 from instagram.tasks import periodic_download_post_thumbnails
 from instagram.tasks import periodic_generate_post_embeddings
+from instagram.tasks import periodic_generate_post_media_thumbnails
 from instagram.tasks import periodic_process_post_thumbnails
 from instagram.tasks import process_post_thumbnail
 from instagram.tests.factories import PostFactory
@@ -260,3 +262,58 @@ class TestPeriodicDownloadPostMedia(TestCase):
         periodic_download_post_media()
 
         mock_delay.assert_called_once_with(recent.pk)
+
+
+def _media_with_file(**kwargs):
+    """Return a PostMedia row with a stored media name and no thumbnail."""
+    post_media = PostMediaFactory(**kwargs)
+    PostMedia.objects.filter(pk=post_media.pk).update(media="posts/x/a.mp4")
+    return post_media
+
+
+class TestGeneratePostMediaThumbnail(TestCase):
+    @patch("instagram.models.PostMedia.generate_thumbnail", return_value="t.jpg")
+    def test_generates_for_row_that_needs_it(self, mock_generate):
+        post_media = _media_with_file()
+
+        result = generate_post_media_thumbnail(post_media.id)
+
+        assert result["generated"] is True
+        mock_generate.assert_called_once()
+
+    @patch("instagram.models.PostMedia.generate_thumbnail")
+    def test_skips_missing_done_or_fileless_rows(self, mock_generate):
+        done = _media_with_file()
+        PostMedia.objects.filter(pk=done.pk).update(thumbnail="posts/x/t.jpg")
+        no_file = PostMediaFactory()
+
+        for post_media_id in (999999, done.id, no_file.id):
+            assert generate_post_media_thumbnail(post_media_id)["generated"] is False
+        mock_generate.assert_not_called()
+
+
+class TestPeriodicGeneratePostMediaThumbnails(TestCase):
+    @patch("instagram.tasks.post.generate_post_media_thumbnail.delay")
+    def test_queues_recent_rows_with_media_and_no_thumbnail(self, mock_delay):
+        needs = _media_with_file()
+        done = _media_with_file()
+        PostMedia.objects.filter(pk=done.pk).update(thumbnail="posts/x/t.jpg")
+        PostMediaFactory()  # no media file
+        old = _media_with_file()
+        Post.objects.filter(pk=old.post.pk).update(
+            created_at=timezone.now() - timedelta(days=15),
+        )
+
+        periodic_generate_post_media_thumbnails()
+
+        mock_delay.assert_called_once_with(needs.pk)
+
+    @patch("instagram.tasks.post.MEDIA_THUMBNAIL_BATCH_SIZE", 2)
+    @patch("instagram.tasks.post.generate_post_media_thumbnail.delay")
+    def test_queues_newest_rows_up_to_the_batch_size(self, mock_delay):
+        rows = [_media_with_file() for _ in range(3)]
+
+        periodic_generate_post_media_thumbnails()
+
+        queued = {call.args[0] for call in mock_delay.call_args_list}
+        assert queued == {rows[2].pk, rows[1].pk}

@@ -7,6 +7,7 @@ from django.utils import timezone
 from instagram.models import Post
 from instagram.models import PostMedia
 from instagram.models.post import NEEDS_EMBEDDING
+from instagram.models.post import NEEDS_MEDIA_THUMBNAIL
 from instagram.models.post import NEEDS_POST_MEDIA
 from instagram.models.post import NEEDS_THUMBNAIL_PROCESSING
 from instagram.tasks.story import FILE_RETRY
@@ -17,6 +18,12 @@ THUMBNAIL_DOWNLOAD_WINDOW = timedelta(days=7)
 
 # Each post costs one paid OpenRouter call, so a run queues at most this many.
 EMBEDDING_BATCH_SIZE = 500
+
+# Media whose thumbnail still fails after this long is given up on.
+MEDIA_THUMBNAIL_WINDOW = timedelta(days=14)
+
+# Each task reads a whole file from storage, so a run queues at most this many.
+MEDIA_THUMBNAIL_BATCH_SIZE = 500
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +128,22 @@ def download_post_media_from_url(self, post_media_id):
     return PostMedia.download_media_by_id(post_media_id)
 
 
+@shared_task(bind=True, **FILE_RETRY)
+def generate_post_media_thumbnail(self, post_media_id):
+    """Make a PostMedia thumbnail from its stored media file.
+
+    Only storage and database errors are retried. A row that gets no
+    thumbnail is queued again by periodic_generate_post_media_thumbnails.
+
+    Args:
+        post_media_id (int): primary key of the PostMedia row
+
+    Returns:
+        dict: success (bool), post_media_id and generated (bool)
+    """
+    return PostMedia.generate_thumbnail_by_id(post_media_id)
+
+
 # ---------------------------------------------------------------------------
 # Periodic tasks (scheduled by Celery Beat)
 # ---------------------------------------------------------------------------
@@ -194,3 +217,21 @@ def periodic_download_post_media():
         post__created_at__gte=timezone.now() - THUMBNAIL_DOWNLOAD_WINDOW,
     ).filter(Q(media="") | Q(media__isnull=True))
     return _queue_each(download_post_media_from_url, post_media)
+
+
+@shared_task
+def periodic_generate_post_media_thumbnails():
+    """Queue thumbnails for the newest stored media that have none.
+
+    Only media of posts archived in the last MEDIA_THUMBNAIL_WINDOW are
+    queued, so a file that never yields a thumbnail is not read forever. At
+    most MEDIA_THUMBNAIL_BATCH_SIZE rows are queued per run.
+
+    Returns:
+        dict: success (bool), total, queued and errors (int)
+    """
+    rows = PostMedia.objects.filter(
+        NEEDS_MEDIA_THUMBNAIL,
+        post__created_at__gte=timezone.now() - MEDIA_THUMBNAIL_WINDOW,
+    ).order_by("-id")[:MEDIA_THUMBNAIL_BATCH_SIZE]
+    return _queue_each(generate_post_media_thumbnail, rows)
