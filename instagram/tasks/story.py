@@ -61,29 +61,31 @@ def _save_story_file(story_id, field, make_file):
     return story, saved_name
 
 
-def _queue_each(task, stories):
-    """Queue task once for every story in a queryset.
+def _queue_each(task, rows):
+    """Queue task once for every row in a queryset, passing its primary key.
+
+    Also used by the post tasks.
 
     Args:
-        task (celery.Task): task that takes a story_id
-        stories (QuerySet): stories to queue
+        task (celery.Task): task that takes a primary key
+        rows (QuerySet): rows to queue
 
     Returns:
         dict: success (bool), total, queued and errors (int)
     """
-    story_ids = stories.values_list("story_id", flat=True).iterator(chunk_size=2000)
+    pks = rows.values_list("pk", flat=True).iterator(chunk_size=2000)
     total = 0
     errors = 0
-    for story_id in story_ids:
+    for pk in pks:
         total += 1
         try:
-            task.delay(story_id)
+            task.delay(pk)
         except Exception:
             errors += 1
-            logger.exception("Failed to queue %s for story %s", task.name, story_id)
+            logger.exception("Failed to queue %s for %s", task.name, pk)
 
     logger.info(
-        "Queued %s for %d of %d stories",
+        "Queued %s for %d of %d rows",
         task.name,
         total - errors,
         total,
@@ -94,6 +96,11 @@ def _queue_each(task, stories):
         "queued": total - errors,
         "errors": errors,
     }
+
+
+# ---------------------------------------------------------------------------
+# Tasks
+# ---------------------------------------------------------------------------
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=10, ignore_result=True)
@@ -208,21 +215,6 @@ def story_generate_blur_data_url(story_id):
 
 
 @shared_task
-def auto_generate_story_blur_data_urls():
-    """Queue blur generation for stories that have an image but no blur yet.
-
-    Run periodically by Celery Beat.
-
-    Returns:
-        dict: success (bool), total, queued and errors (int)
-    """
-    stories = Story.objects.filter(blur_data_url="").filter(
-        Q(thumbnail__gt="") | Q(thumbnail_url__gt=""),
-    )
-    return _queue_each(story_generate_blur_data_url, stories)
-
-
-@shared_task
 def generate_story_embedding(story_id):
     """Generate an embedding for a story's thumbnail.
 
@@ -262,19 +254,6 @@ def generate_story_embedding(story_id):
     return {"success": True, "story_id": story_id, "dimensions": len(embedding)}
 
 
-@shared_task
-def periodic_generate_story_embeddings():
-    """Queue embedding generation for stories with a thumbnail but no embedding.
-
-    Run periodically by Celery Beat.
-
-    Returns:
-        dict: success (bool), total, queued and errors (int)
-    """
-    stories = Story.objects.filter(embedding__isnull=True, thumbnail__gt="")
-    return _queue_each(generate_story_embedding, stories)
-
-
 @shared_task(
     bind=True,
     autoretry_for=(Exception,),
@@ -302,6 +281,39 @@ def moderate_story_content(self, story_id):
     story.moderate_content()
     logger.info("Moderated story %s", story_id)
     return {"success": True, "story_id": story_id}
+
+
+# ---------------------------------------------------------------------------
+# Periodic tasks (scheduled by Celery Beat)
+# ---------------------------------------------------------------------------
+
+
+@shared_task
+def auto_generate_story_blur_data_urls():
+    """Queue blur generation for stories that have an image but no blur yet.
+
+    Run periodically by Celery Beat.
+
+    Returns:
+        dict: success (bool), total, queued and errors (int)
+    """
+    stories = Story.objects.filter(blur_data_url="").filter(
+        Q(thumbnail__gt="") | Q(thumbnail_url__gt=""),
+    )
+    return _queue_each(story_generate_blur_data_url, stories)
+
+
+@shared_task
+def periodic_generate_story_embeddings():
+    """Queue embedding generation for stories with a thumbnail but no embedding.
+
+    Run periodically by Celery Beat.
+
+    Returns:
+        dict: success (bool), total, queued and errors (int)
+    """
+    stories = Story.objects.filter(embedding__isnull=True, thumbnail__gt="")
+    return _queue_each(generate_story_embedding, stories)
 
 
 @shared_task

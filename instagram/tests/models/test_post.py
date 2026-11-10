@@ -1,5 +1,7 @@
 from io import BytesIO
+from unittest.mock import patch
 
+from django.core.files.storage import InMemoryStorage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from PIL import Image
@@ -237,3 +239,64 @@ def _make_image_file():
     img.save(buf, format="JPEG")
     buf.seek(0)
     return SimpleUploadedFile("thumb.jpg", buf.read(), content_type="image/jpeg")
+
+
+class TestPostDownloadThumbnail(TestCase):
+    """Tests for the Post.download_thumbnail method."""
+
+    def setUp(self):
+        self.storage = InMemoryStorage()
+        patcher = patch.object(
+            Post._meta.get_field("thumbnail"),  # noqa: SLF001
+            "storage",
+            self.storage,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_downloads_and_saves_name(self, mock_download):
+        """The file is stored and its name written to the row without history."""
+        mock_download.return_value = (b"jpeg-bytes", "jpg")
+        post = PostFactory(thumbnail_url="https://cdn.example.com/a.jpg")
+        history_count = post.history.count()
+
+        saved_name = post.download_thumbnail()
+
+        assert saved_name.endswith(".jpg")
+        assert Post.objects.get(pk=post.pk).thumbnail.name == saved_name
+        assert post.history.count() == history_count
+        mock_download.assert_called_once_with("https://cdn.example.com/a.jpg")
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_skips_without_url_or_on_failure(self, mock_download):
+        """Nothing is saved when the URL is empty or the download fails."""
+        post = PostFactory(thumbnail_url="")
+        assert post.download_thumbnail() is None
+        mock_download.assert_not_called()
+
+        mock_download.return_value = (None, None)
+        post.thumbnail_url = "https://cdn.example.com/a.jpg"
+        assert post.download_thumbnail() is None
+        assert not Post.objects.get(pk=post.pk).thumbnail
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_skips_when_thumbnail_exists(self, mock_download):
+        """A post that already has a thumbnail is not downloaded again."""
+        post = PostFactory()
+        post.thumbnail.name = "posts/x/existing.jpg"
+
+        assert post.download_thumbnail() is None
+        mock_download.assert_not_called()
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_loser_of_race_deletes_its_file(self, mock_download):
+        """If another worker saved a thumbnail first, the new file is removed."""
+        mock_download.return_value = (b"jpeg-bytes", "jpg")
+        post = PostFactory()
+        Post.objects.filter(pk=post.pk).update(thumbnail="posts/x/winner.jpg")
+
+        assert post.download_thumbnail() is None
+        assert Post.objects.get(pk=post.pk).thumbnail.name == "posts/x/winner.jpg"
+        _, files = self.storage.listdir(f"posts/{post.user.username}")
+        assert files == []

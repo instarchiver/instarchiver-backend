@@ -12,6 +12,11 @@ from instagram.models import User
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Tasks
+# ---------------------------------------------------------------------------
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=10, ignore_result=True)
 def increment_user_view_count(self, user_id) -> None:
     """Atomically increment a user's view_count by 1.
@@ -274,86 +279,6 @@ def update_user_posts_from_api(self, user_id):
     }
 
 
-@shared_task
-def auto_update_users_profile(*, force=False):
-    """
-    Queue a SaveAPI profile update for every user with auto-update enabled.
-    With force=True it queues every user and ignores allow_auto_update_profile.
-    Each queued user costs SaveAPI credits.
-    Returns summary of operations performed.
-    """
-    try:
-        user_rows = (
-            (
-                User.objects.all()
-                if force
-                else User.objects.filter(allow_auto_update_profile=True)
-            )
-            .values_list("uuid", "username")
-            .iterator(chunk_size=2000)
-        )
-
-        total_users = 0
-        updated_count = 0
-        error_count = 0
-        errors = []
-        task_ids = []
-
-        for user_uuid, username in user_rows:
-            total_users += 1
-            try:
-                # Use Celery task to handle each user's profile update
-                task_result = auto_update_user_profile.delay(
-                    str(user_uuid),
-                    force=force,
-                )
-                task_ids.append(task_result.id)
-                updated_count += 1
-                logger.info(
-                    "Successfully queued profile update for user: %s (task: %s)",
-                    username,
-                    task_result.id,
-                )
-            except Exception as e:
-                error_count += 1
-                error_msg = f"Failed to queue profile update for user {username}: {e!s}"
-                errors.append(error_msg)
-                logger.exception(
-                    "Error queuing profile update for user %s",
-                    username,
-                )
-
-        if total_users == 0:
-            logger.info("No users found with auto-update profile enabled")
-            return {
-                "success": True,
-                "message": "No users to update",
-                "updated": 0,
-                "errors": 0,
-            }
-
-        logger.info(
-            "Profile update queuing completed: %d queued, %d errors out of %d total users",  # noqa: E501
-            updated_count,
-            error_count,
-            total_users,
-        )
-
-        return {  # noqa: TRY300
-            "success": True,
-            "message": "Profile update tasks queued",
-            "total": total_users,
-            "queued": updated_count,
-            "errors": error_count,
-            "error_details": errors if errors else None,
-            "task_ids": task_ids,
-        }
-
-    except Exception as e:
-        logger.exception("Critical error in auto_update_users_profile")
-        return {"success": False, "error": f"Critical error: {e!s}"}
-
-
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def auto_update_user_profile(self, user_id, *, force=False):
     """
@@ -439,6 +364,91 @@ def auto_update_user_profile(self, user_id, *, force=False):
             "username": user.username,
             "attempts": self.request.retries + 1,
         }
+
+
+# ---------------------------------------------------------------------------
+# Periodic tasks (scheduled by Celery Beat)
+# ---------------------------------------------------------------------------
+
+
+@shared_task
+def auto_update_users_profile(*, force=False):
+    """
+    Queue a SaveAPI profile update for every user with auto-update enabled.
+    With force=True it queues every user and ignores allow_auto_update_profile.
+    Each queued user costs SaveAPI credits.
+    Returns summary of operations performed.
+    """
+    try:
+        user_rows = (
+            (
+                User.objects.all()
+                if force
+                else User.objects.filter(allow_auto_update_profile=True)
+            )
+            .values_list("uuid", "username")
+            .iterator(chunk_size=2000)
+        )
+
+        total_users = 0
+        updated_count = 0
+        error_count = 0
+        errors = []
+        task_ids = []
+
+        for user_uuid, username in user_rows:
+            total_users += 1
+            try:
+                # Use Celery task to handle each user's profile update
+                task_result = auto_update_user_profile.delay(
+                    str(user_uuid),
+                    force=force,
+                )
+                task_ids.append(task_result.id)
+                updated_count += 1
+                logger.info(
+                    "Successfully queued profile update for user: %s (task: %s)",
+                    username,
+                    task_result.id,
+                )
+            except Exception as e:
+                error_count += 1
+                error_msg = f"Failed to queue profile update for user {username}: {e!s}"
+                errors.append(error_msg)
+                logger.exception(
+                    "Error queuing profile update for user %s",
+                    username,
+                )
+
+        if total_users == 0:
+            logger.info("No users found with auto-update profile enabled")
+            return {
+                "success": True,
+                "message": "No users to update",
+                "updated": 0,
+                "errors": 0,
+            }
+
+        logger.info(
+            "Profile update queuing completed: %d queued, %d errors out of %d total users",  # noqa: E501
+            updated_count,
+            error_count,
+            total_users,
+        )
+
+        return {  # noqa: TRY300
+            "success": True,
+            "message": "Profile update tasks queued",
+            "total": total_users,
+            "queued": updated_count,
+            "errors": error_count,
+            "error_details": errors if errors else None,
+            "task_ids": task_ids,
+        }
+
+    except Exception as e:
+        logger.exception("Critical error in auto_update_users_profile")
+        return {"success": False, "error": f"Critical error: {e!s}"}
 
 
 @shared_task

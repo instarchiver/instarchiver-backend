@@ -257,7 +257,8 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 - `story_generate_blur_data_url()` / `auto_generate_story_blur_data_urls()` - Blur placeholders for stories
 - `generate_story_embedding()` / `periodic_generate_story_embeddings()` - pgvector embeddings from thumbnail images
 - `moderate_story_content()` / `periodic_moderate_story_content()` - OpenAI moderation API flagging
-- Posts have no archiving tasks yet because the post pipeline is being rebuilt. `increment_post_view_count()` is the only post task
+- `download_post_thumbnail_from_url()` / `periodic_download_post_thumbnails()` - Download a post's `thumbnail_url` into `thumbnail`. Instagram CDN URLs expire, so the periodic task only queues posts archived in the last 7 days. Nothing else queues the download, so new posts wait for the next run. The task doesn't retry a failed download; the next periodic run queues it again, so schedule that task hourly
+- Each file in `instagram/tasks/` lists regular tasks first, then periodic (Celery Beat) tasks below a separator comment. Add new tasks to the matching section
 
 ### AI Features
 
