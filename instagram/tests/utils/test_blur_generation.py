@@ -1,157 +1,59 @@
 import base64
 from io import BytesIO
-from unittest.mock import Mock
-from unittest.mock import patch
 
-import pytest
-import requests
 from django.test import TestCase
 from PIL import Image as PILImage
 
-from instagram.utils import generate_blur_data_url_from_image_url
+from instagram.utils import generate_blur_data_url_from_image
 
 
-class TestGenerateBlurDataUrlFromImageUrl(TestCase):
-    """Tests for the generate_blur_data_url_from_image_url utility function."""
+def _decode(result):
+    return PILImage.open(BytesIO(base64.b64decode(result)))
 
-    @patch("instagram.utils.requests.get")
-    def test_generate_blur_data_url_success(self, mock_get):
-        """Test successful blur data URL generation with a valid image URL."""
-        # Create a test image
-        img = PILImage.new("RGB", (100, 100), color="red")
-        img_buffer = BytesIO()
-        img.save(img_buffer, format="JPEG")
-        img_buffer.seek(0)
 
-        # Mock the requests.get response
-        mock_response = Mock()
-        mock_response.content = img_buffer.read()
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+class TestGenerateBlurDataUrlFromImage(TestCase):
+    """Tests for the generate_blur_data_url_from_image utility function."""
 
-        # Call the function
-        result = generate_blur_data_url_from_image_url("https://example.com/image.jpg")
+    def test_shrinks_to_two_percent(self):
+        """The default output is 2% of the original size."""
+        result = generate_blur_data_url_from_image(PILImage.new("RGB", (200, 200)))
 
-        # Verify the result is a base64 string
-        assert isinstance(result, str)
-        assert len(result) > 0
+        assert _decode(result).size == (4, 4)
 
-        # Verify it's valid base64
-        decoded = base64.b64decode(result)
-        assert len(decoded) > 0
-
-        # Verify requests.get was called with correct URL and timeout
-        mock_get.assert_called_once_with("https://example.com/image.jpg", timeout=30)
-
-    @patch("instagram.utils.requests.get")
-    def test_generate_blur_data_url_custom_resize_percentage(self, mock_get):
-        """Test blur data URL generation with custom resize percentage."""
-        # Create a test image
-        img = PILImage.new("RGB", (100, 100), color="blue")
-        img_buffer = BytesIO()
-        img.save(img_buffer, format="JPEG")
-        img_buffer.seek(0)
-
-        # Mock the requests.get response
-        mock_response = Mock()
-        mock_response.content = img_buffer.read()
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
-
-        # Call the function with custom resize percentage
-        result = generate_blur_data_url_from_image_url(
-            "https://example.com/image.jpg",
+    def test_custom_resize_percentage(self):
+        """resize_percentage controls the output size."""
+        result = generate_blur_data_url_from_image(
+            PILImage.new("RGB", (100, 100)),
             resize_percentage=0.05,
         )
 
-        # Verify the result is a base64 string
-        assert isinstance(result, str)
-        assert len(result) > 0
+        assert _decode(result).size == (5, 5)
 
-    @patch("instagram.utils.requests.get")
-    def test_generate_blur_data_url_network_error(self, mock_get):
-        """Test handling of network errors when fetching image."""
-        # Mock a network error
-        mock_get.side_effect = requests.exceptions.ConnectionError("Network error")
+    def test_small_image_keeps_at_least_one_pixel(self):
+        """A 10x10 image shrinks to 1x1 instead of failing on a zero size."""
+        result = generate_blur_data_url_from_image(PILImage.new("RGB", (10, 10)))
 
-        # Verify the function raises the exception
-        with pytest.raises(requests.exceptions.ConnectionError):
-            generate_blur_data_url_from_image_url("https://example.com/image.jpg")
+        assert _decode(result).size == (1, 1)
 
-    @patch("instagram.utils.requests.get")
-    def test_generate_blur_data_url_http_error(self, mock_get):
-        """Test handling of HTTP errors (404, 500, etc.)."""
-        # Mock an HTTP error
-        mock_response = Mock()
-        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
-            "404 Not Found",
-        )
-        mock_get.return_value = mock_response
+    def test_rgba_png_becomes_jpeg(self):
+        """Images with alpha are flattened and always encoded as JPEG."""
+        img = PILImage.new("RGBA", (200, 100), color=(0, 0, 255, 128))
 
-        # Verify the function raises the exception
-        with pytest.raises(requests.exceptions.HTTPError):
-            generate_blur_data_url_from_image_url("https://example.com/image.jpg")
+        decoded = _decode(generate_blur_data_url_from_image(img))
 
-    @patch("instagram.utils.requests.get")
-    def test_generate_blur_data_url_invalid_image_data(self, mock_get):
-        """Test handling of invalid image data."""
-        # Mock response with invalid image data
-        mock_response = Mock()
-        mock_response.content = b"not an image"
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        assert decoded.format == "JPEG"
+        assert decoded.size == (4, 2)
 
-        # Verify the function raises an exception (PIL raises UnidentifiedImageError)
-        with pytest.raises(Exception, match=r".*"):  # PIL will raise an exception
-            generate_blur_data_url_from_image_url("https://example.com/image.jpg")
-
-    @patch("instagram.utils.requests.get")
-    def test_generate_blur_data_url_returns_valid_base64(self, mock_get):
-        """Test that the returned string is valid base64 and can be decoded."""
-        # Create a test image
-        img = PILImage.new("RGB", (200, 200), color="green")
-        img_buffer = BytesIO()
-        img.save(img_buffer, format="PNG")
-        img_buffer.seek(0)
-
-        # Mock the requests.get response
-        mock_response = Mock()
-        mock_response.content = img_buffer.read()
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
-
-        # Call the function
-        result = generate_blur_data_url_from_image_url("https://example.com/image.png")
-
-        # Verify it's valid base64
-        decoded = base64.b64decode(result)
-        assert len(decoded) > 0
-
-        # Verify the decoded data is a valid image
-        decoded_img = PILImage.open(BytesIO(decoded))
-        assert decoded_img.size == (4, 4)  # 200 * 0.02 = 4
-
-    @patch("instagram.utils.requests.get")
-    def test_generate_blur_data_url_different_image_formats(self, mock_get):
-        """Test blur data URL generation with different image formats."""
+    def test_every_input_format_becomes_jpeg(self):
+        """JPEG, PNG and GIF files all produce a JPEG blur."""
         for img_format in ["JPEG", "PNG", "GIF"]:
-            # Create a test image
-            img = PILImage.new("RGB", (100, 100), color="yellow")
-            img_buffer = BytesIO()
-            img.save(img_buffer, format=img_format)
-            img_buffer.seek(0)
-
-            # Mock the requests.get response
-            mock_response = Mock()
-            mock_response.content = img_buffer.read()
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            # Call the function
-            result = generate_blur_data_url_from_image_url(
-                f"https://example.com/image.{img_format.lower()}",
+            buffer = BytesIO()
+            PILImage.new("RGB", (100, 100), color="yellow").save(
+                buffer,
+                format=img_format,
             )
+            buffer.seek(0)
 
-            # Verify the result is a base64 string
-            assert isinstance(result, str)
-            assert len(result) > 0
+            result = generate_blur_data_url_from_image(PILImage.open(buffer))
+
+            assert _decode(result).format == "JPEG"

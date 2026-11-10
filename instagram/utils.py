@@ -48,53 +48,65 @@ def download_file_from_url(url, timeout=30):
         return None, None
 
 
-def generate_blur_data_url_from_image_url(
-    image_url: str,
-    resize_percentage: float = 0.02,
-) -> str:
-    """
-    Generates a blurred data URL from an image URL.
+def generate_blur_data_url_from_image(img, resize_percentage=0.02):
+    """Shrink an opened image and return it as a base64 JPEG string.
 
-    This function retrieves an image from the provided URL,
-    resizes it to a specified percentage of its original dimensions,
-    converts it to a base64 string, and returns it.
+    The output is always JPEG, because the frontend labels every blur as
+    image/jpeg. Each side is at least 1px.
 
     Args:
-        image_url (str): The URL of the image to process
-        resize_percentage (float): Percentage to resize (default: 0.02 = 2%)
+        img (PIL.Image.Image): the image to shrink
+        resize_percentage (float): share of the original size to keep
 
     Returns:
-        str: Base64 encoded string of the resized image
-
-    Raises:
-        requests.exceptions.RequestException: If there's an error fetching the image
-        IOError: If there's an error processing the image
+        str: base64 encoded JPEG
     """
-    logger.info("Generating blur data URL from image URL: %s", image_url)
-
-    # Fetch the image from URL using requests
-    response = requests.get(image_url, timeout=30)
-    response.raise_for_status()  # Raise exception for HTTP errors
-
-    # Open the image from the response content
-    img = PILImage.open(BytesIO(response.content))
-
-    # Calculate new dimensions
     width, height = img.size
-    new_width = int(width * resize_percentage)
-    new_height = int(height * resize_percentage)
-
-    # Resize the image
-    resized_img = img.resize((new_width, new_height))
-
-    # Convert to base64
+    new_size = (
+        max(1, int(width * resize_percentage)),
+        max(1, int(height * resize_percentage)),
+    )
     buffer = BytesIO()
-    img_format = img.format or "JPEG"
-    resized_img.save(buffer, format=img_format)
-    base64_string = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    img.convert("RGB").resize(new_size).save(buffer, format="JPEG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-    logger.info("Successfully generated blur data URL")
-    return base64_string
+
+# EXIF Orientation values that turn the picture by 90 degrees.
+ROTATED_EXIF_ORIENTATIONS = {5, 6, 7, 8}
+
+
+def get_media_size(content):
+    """Return the width and height of image or video bytes.
+
+    Images are tried first, so AVIF/HEIC (which also start with an ftyp box)
+    are not read as video. An image turned by EXIF reports the size it is
+    shown at. Videos are read from the stream header without decoding.
+
+    shortcut: video rotation metadata is ignored, so a rotated phone video
+    reports its stored size; read the display matrix if that matters.
+
+    Args:
+        content (bytes): the downloaded file
+
+    Returns:
+        tuple: (width, height) as ints, or (None, None) if unreadable
+    """
+    try:
+        with PILImage.open(BytesIO(content)) as img:
+            width, height = img.size
+            if img.getexif().get(0x0112) in ROTATED_EXIF_ORIENTATIONS:
+                width, height = height, width
+            return width, height
+    except (OSError, ValueError):
+        pass
+
+    try:
+        with av.open(BytesIO(content)) as container:
+            codec = container.streams.video[0].codec_context
+            return codec.width, codec.height
+    except (av.error.FFmpegError, IndexError, ValueError):
+        logger.warning("Could not read the size of the downloaded media")
+        return None, None
 
 
 def extract_video_frame(file_obj, at_seconds: float = 1.0) -> bytes | None:

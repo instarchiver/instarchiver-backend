@@ -128,13 +128,10 @@ Available singleton models: `OpenAISetting`, `CoreAPISetting`, `FirebaseAdminSet
 Always use the centralized Core API client — never make direct HTTP requests:
 
 ```python
-from core.utils.instagram_api import (
-    fetch_user_info_by_username_v2,
-    fetch_user_info_by_user_id,
-)
+from core.utils.saveapi import fetch_user_profile
 
 # ✅ CORRECT — automatic logging, error handling, timing
-user_data = fetch_user_info_by_username_v2(username)
+user_data = fetch_user_profile(username)
 
 # ❌ WRONG — bypasses logging and error handling
 import requests

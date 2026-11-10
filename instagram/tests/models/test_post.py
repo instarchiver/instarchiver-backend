@@ -1,16 +1,21 @@
+import base64
 from io import BytesIO
-from unittest.mock import Mock
 from unittest.mock import patch
 
 import pytest
+import requests
+from django.core.files.base import ContentFile
+from django.core.files.storage import InMemoryStorage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from PIL import Image
 
 from instagram.models import Post
+from instagram.models import PostMedia
 from instagram.tests.factories import InstagramUserFactory
 from instagram.tests.factories import PostFactory
 from instagram.tests.factories import PostMediaFactory
+from instagram.tests.tasks.test_story_thumbnail import _make_video_bytes
 
 
 class TestPostModel(TestCase):
@@ -41,67 +46,6 @@ class TestPostModel(TestCase):
         assert post.user.username is not None
         assert post.user.instagram_id is not None
 
-    @patch("instagram.tasks.post_generate_blur_data_url.delay")
-    def test_generate_blur_data_url_task_queues_task(self, mock_task_delay):
-        """Test that generate_blur_data_url_task queues a Celery task."""
-        # Create a test post
-        post = PostFactory()
-
-        # Mock the task delay
-        mock_result = Mock()
-        mock_result.id = "task-id-123"
-        mock_task_delay.return_value = mock_result
-
-        # Call the method
-        post.generate_blur_data_url_task()
-
-        # Verify the task was queued
-        mock_task_delay.assert_called_once()
-
-    @patch("instagram.tasks.post_generate_blur_data_url.delay")
-    def test_generate_blur_data_url_task_passes_post_id(
-        self,
-        mock_task_delay,
-    ):
-        """Test that generate_blur_data_url_task passes correct post id."""
-        # Create a test post
-        post = PostFactory()
-
-        # Mock the task delay
-        mock_result = Mock()
-        mock_result.id = "task-id-123"
-        mock_task_delay.return_value = mock_result
-
-        # Call the method
-        post.generate_blur_data_url_task()
-
-        # Verify the task was called with the correct post id
-        mock_task_delay.assert_called_once_with(post.id)
-
-    @patch("instagram.tasks.post_generate_blur_data_url.delay")
-    def test_generate_blur_data_url_task_multiple_calls(
-        self,
-        mock_task_delay,
-    ):
-        """Test multiple calls queue separate tasks."""
-        # Create test posts
-        post1 = PostFactory()
-        post2 = PostFactory()
-
-        # Mock the task delay
-        mock_result = Mock()
-        mock_result.id = "task-id-123"
-        mock_task_delay.return_value = mock_result
-
-        # Call the method on both posts
-        post1.generate_blur_data_url_task()
-        post2.generate_blur_data_url_task()
-
-        # Verify the task was queued twice with different post ids
-        assert mock_task_delay.call_count == 2  # noqa: PLR2004
-        mock_task_delay.assert_any_call(post1.id)
-        mock_task_delay.assert_any_call(post2.id)
-
 
 class TestPostMediaModel(TestCase):
     """Tests for the PostMedia model."""
@@ -131,264 +75,6 @@ class TestPostMediaModel(TestCase):
         assert post_media.post.id is not None
         assert post_media.post.user is not None
         assert post_media.post.variant is not None
-
-    @patch("instagram.tasks.post_media_generate_blur_data_url.delay")
-    def test_generate_blur_data_url_task_queues_task(self, mock_task_delay):
-        """Test that generate_blur_data_url_task queues a Celery task."""
-        # Create a test post media
-        post_media = PostMediaFactory()
-
-        # Mock the task delay
-        mock_result = Mock()
-        mock_result.id = "task-id-123"
-        mock_task_delay.return_value = mock_result
-
-        # Call the method
-        post_media.generate_blur_data_url_task()
-
-        # Verify the task was queued
-        mock_task_delay.assert_called_once_with(post_media.id)
-
-
-class TestPostProcessingMethods(TestCase):
-    """Tests for Post model processing methods."""
-
-    def test_process_post_by_type_carousel(self):
-        """Test process_post_by_type identifies and processes carousel posts."""
-        # Create post with carousel raw_data
-        raw_data = {
-            "id": "1234567890",
-            "carousel_media": [
-                {
-                    "strong_id__": "carousel_item_1",
-                    "display_uri": "https://example.com/carousel1.jpg",
-                },
-                {
-                    "strong_id__": "carousel_item_2",
-                    "display_uri": "https://example.com/carousel2.jpg",
-                },
-            ],
-        }
-        post = PostFactory(raw_data=raw_data)
-
-        # Process the post
-        post.process_post_by_type()
-
-        # Verify variant was set to carousel
-        post.refresh_from_db()
-        assert post.variant == post.POST_VARIANT_CAROUSEL
-
-        # Verify PostMedia objects were created
-        assert post.postmedia_set.count() == 2  # noqa: PLR2004
-
-    def test_process_post_by_type_video(self):
-        """Test process_post_by_type identifies and processes video posts."""
-        # Create post with video raw_data
-        raw_data = {
-            "id": "1234567890",
-            "video_versions": [
-                {"url": "https://example.com/video.mp4"},
-            ],
-            "image_versions2": {
-                "candidates": [
-                    {"url": "https://example.com/thumbnail.jpg"},
-                ],
-            },
-        }
-        post = PostFactory(raw_data=raw_data)
-
-        # Process the post
-        post.process_post_by_type()
-
-        # Verify variant was set to video
-        post.refresh_from_db()
-        assert post.variant == post.POST_VARIANT_VIDEO
-
-        # Verify PostMedia object was created
-        assert post.postmedia_set.count() == 1
-
-    def test_process_post_by_type_normal(self):
-        """Test process_post_by_type identifies and processes normal posts."""
-        # Create post with normal raw_data (no carousel_media or video_versions)
-        raw_data = {
-            "id": "1234567890",
-            "image_versions2": {
-                "candidates": [
-                    {"url": "https://example.com/image.jpg"},
-                ],
-            },
-        }
-        post = PostFactory(raw_data=raw_data)
-
-        # Process the post
-        post.process_post_by_type()
-
-        # Verify variant was set to normal
-        post.refresh_from_db()
-        assert post.variant == post.POST_VARIANT_NORMAL
-
-        # Verify PostMedia object was created
-        assert post.postmedia_set.count() == 1
-
-    def test_process_post_by_type_no_raw_data(self):
-        """Test process_post_by_type handles posts without raw_data."""
-        # Create post without raw_data
-        post = PostFactory(raw_data=None)
-
-        # Process the post - should not raise an error
-        post.process_post_by_type()
-
-        # No PostMedia should be created
-        assert post.postmedia_set.count() == 0
-
-    def test_handle_post_carousel_idempotent(self):
-        """Test handle_post_carousel is idempotent (safe to call multiple times)."""
-        # Create post with carousel raw_data
-        raw_data = {
-            "id": "1234567890",
-            "carousel_media": [
-                {
-                    "strong_id__": "carousel_item_1",
-                    "display_uri": "https://example.com/carousel1.jpg",
-                },
-            ],
-        }
-        post = PostFactory(raw_data=raw_data)
-
-        # Call handle_post_carousel multiple times
-        post.handle_post_carousel()
-        post.handle_post_carousel()
-        post.handle_post_carousel()
-
-        # Verify only one PostMedia object was created (due to get_or_create)
-        assert post.postmedia_set.count() == 1
-
-    def test_handle_post_normal_creates_post_media(self):
-        """Test handle_post_normal creates PostMedia with correct data."""
-        # Create post with normal raw_data
-        raw_data = {
-            "id": "1234567890",
-            "image_versions2": {
-                "candidates": [
-                    {"url": "https://example.com/image.jpg"},
-                ],
-            },
-        }
-        post = PostFactory(raw_data=raw_data)
-
-        # Call handle_post_normal
-        post.handle_post_normal()
-
-        # Verify PostMedia was created with correct data
-        post_media = post.postmedia_set.first()
-        assert post_media is not None
-        assert post_media.reference == raw_data["id"]
-        assert post_media.thumbnail_url == "https://example.com/image.jpg"
-        assert post_media.media_url == "https://example.com/image.jpg"
-
-    def test_handle_post_carousel_creates_multiple_media(self):
-        """Test handle_post_carousel creates multiple PostMedia objects."""
-        # Create post with carousel raw_data
-        raw_data = {
-            "id": "1234567890",
-            "carousel_media": [
-                {
-                    "strong_id__": "carousel_item_1",
-                    "display_uri": "https://example.com/carousel1.jpg",
-                },
-                {
-                    "strong_id__": "carousel_item_2",
-                    "display_uri": "https://example.com/carousel2.jpg",
-                },
-                {
-                    "strong_id__": "carousel_item_3",
-                    "display_uri": "https://example.com/carousel3.jpg",
-                },
-            ],
-        }
-        post = PostFactory(raw_data=raw_data)
-
-        # Call handle_post_carousel
-        post.handle_post_carousel()
-
-        # Verify all PostMedia objects were created
-        assert post.postmedia_set.count() == 3  # noqa: PLR2004
-
-        # Verify each has correct reference
-        references = list(post.postmedia_set.values_list("reference", flat=True))
-        assert "carousel_item_1" in references
-        assert "carousel_item_2" in references
-        assert "carousel_item_3" in references
-
-    def test_handle_post_video_creates_post_media(self):
-        """Test handle_post_video creates PostMedia with video URL."""
-        # Create post with video raw_data
-        raw_data = {
-            "id": "1234567890",
-            "video_versions": [
-                {"url": "https://example.com/video.mp4"},
-            ],
-            "image_versions2": {
-                "candidates": [
-                    {"url": "https://example.com/thumbnail.jpg"},
-                ],
-            },
-        }
-        post = PostFactory(raw_data=raw_data)
-
-        # Call handle_post_video
-        post.handle_post_video()
-
-        # Verify PostMedia was created with video URL
-        post_media = post.postmedia_set.first()
-        assert post_media is not None
-        assert post_media.reference == raw_data["id"]
-        assert post_media.thumbnail_url == "https://example.com/thumbnail.jpg"
-        assert post_media.media_url == "https://example.com/video.mp4"
-
-    def test_handle_post_normal_skips_carousel(self):
-        """Test handle_post_normal skips processing if carousel_media exists."""
-        # Create post with carousel raw_data
-        raw_data = {
-            "id": "1234567890",
-            "carousel_media": [
-                {
-                    "strong_id__": "carousel_item_1",
-                    "display_uri": "https://example.com/carousel1.jpg",
-                },
-            ],
-        }
-        post = PostFactory(raw_data=raw_data)
-
-        # Call handle_post_normal (should skip)
-        post.handle_post_normal()
-
-        # Verify variant was NOT changed to normal
-        post.refresh_from_db()
-        # Variant should still be whatever was set by factory (carousel or normal)
-        # No PostMedia should be created by handle_post_normal
-        assert post.postmedia_set.count() == 0
-
-    def test_handle_post_video_skips_without_video_versions(self):
-        """Test handle_post_video skips if no video_versions in raw_data."""
-        # Create post without video_versions
-        raw_data = {
-            "id": "1234567890",
-            "image_versions2": {
-                "candidates": [
-                    {"url": "https://example.com/image.jpg"},
-                ],
-            },
-        }
-        post = PostFactory(raw_data=raw_data)
-
-        # Call handle_post_video
-        post.handle_post_video()
-
-        # Verify variant was set to video but no PostMedia created
-        post.refresh_from_db()
-        assert post.variant == post.POST_VARIANT_VIDEO
-        assert post.postmedia_set.count() == 0
 
 
 class TestPostCaption(TestCase):
@@ -481,7 +167,6 @@ class TestPostCaption(TestCase):
             "taken_at": 1234567890,
         }
 
-        # Simulate what happens in User._update_post_data_from_api
         obj, _ = Post.objects.update_or_create(
             id=raw_data.get("pk"),
             user=user,
@@ -509,7 +194,6 @@ class TestPostCaption(TestCase):
             "taken_at": 1234567890,
         }
 
-        # Simulate what happens in User._update_post_data_from_api
         obj, _ = Post.objects.update_or_create(
             id=raw_data.get("pk"),
             user=user,
@@ -538,7 +222,6 @@ class TestPostCaption(TestCase):
             "taken_at": 1234567890,
         }
 
-        # Simulate what happens in User._update_post_data_from_api
         obj, _ = Post.objects.update_or_create(
             id=raw_data.get("pk"),
             user=user,
@@ -564,47 +247,404 @@ def _make_image_file():
     return SimpleUploadedFile("thumb.jpg", buf.read(), content_type="image/jpeg")
 
 
-class TestPostModerateContent(TestCase):
-    """Tests for Post.moderate_content() method."""
+class TestPostDownloadThumbnail(TestCase):
+    """Tests for the Post.download_thumbnail method."""
 
-    def test_moderate_content_raises_error_without_thumbnail(self):
-        """Test that moderate_content raises ValueError when no thumbnail exists."""
-        post = PostFactory(thumbnail_url="", raw_data=None)
+    def setUp(self):
+        self.storage = InMemoryStorage()
+        patcher = patch.object(
+            Post._meta.get_field("thumbnail"),  # noqa: SLF001
+            "storage",
+            self.storage,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-        with pytest.raises(ValueError, match="Thumbnail is required"):
-            post.moderate_content()
+    @patch("instagram.models.post.download_file_from_url")
+    def test_downloads_and_saves_name(self, mock_download):
+        """The file is stored and its name written to the row without history."""
+        mock_download.return_value = (b"jpeg-bytes", "jpg")
+        post = PostFactory(thumbnail_url="https://cdn.example.com/a.jpg")
+        history_count = post.history.count()
 
-    @patch("instagram.models.post.moderate_image_content")
-    def test_moderate_content_success_flagged(self, mock_moderate):
-        """Test moderate_content saves fields when content is flagged."""
-        post = PostFactory(thumbnail_url="", raw_data=None)
-        post.thumbnail.save("thumb.jpg", _make_image_file(), save=True)
+        saved_name = post.download_thumbnail()
 
-        mock_moderate.return_value = {
-            "flagged": True,
-            "categories": {"violence": True},
-        }
+        assert saved_name.endswith(".jpg")
+        assert Post.objects.get(pk=post.pk).thumbnail.name == saved_name
+        assert post.history.count() == history_count
+        mock_download.assert_called_once_with("https://cdn.example.com/a.jpg")
 
-        post.moderate_content()
+    @patch("instagram.models.post.download_file_from_url")
+    def test_skips_without_url_or_on_failure(self, mock_download):
+        """Nothing is saved when the URL is empty or the download fails."""
+        post = PostFactory(thumbnail_url="")
+        assert post.download_thumbnail() is None
+        mock_download.assert_not_called()
+
+        mock_download.return_value = (None, None)
+        post.thumbnail_url = "https://cdn.example.com/a.jpg"
+        assert post.download_thumbnail() is None
+        assert not Post.objects.get(pk=post.pk).thumbnail
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_skips_when_thumbnail_exists(self, mock_download):
+        """A post that already has a thumbnail is not downloaded again."""
+        post = PostFactory()
+        post.thumbnail.name = "posts/x/existing.jpg"
+
+        assert post.download_thumbnail() is None
+        mock_download.assert_not_called()
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_loser_of_race_deletes_its_file(self, mock_download):
+        """If another worker saved a thumbnail first, the new file is removed."""
+        mock_download.return_value = (b"jpeg-bytes", "jpg")
+        post = PostFactory()
+        Post.objects.filter(pk=post.pk).update(thumbnail="posts/x/winner.jpg")
+
+        assert post.download_thumbnail() is None
+        assert Post.objects.get(pk=post.pk).thumbnail.name == "posts/x/winner.jpg"
+        _, files = self.storage.listdir(f"posts/{post.user.username}")
+        assert files == []
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_video_is_stored_as_a_jpeg_frame(self, mock_download):
+        """A video is stored as one JPEG frame, found by extension or header."""
+        for extension in ("mp4", "bin"):
+            mock_download.return_value = (_make_video_bytes(), extension)
+            post = PostFactory(thumbnail_url="https://cdn.example.com/clip")
+
+            saved_name = post.download_thumbnail()
+
+            assert saved_name.endswith(".jpg")
+            with self.storage.open(saved_name) as stored:
+                assert Image.open(stored).format == "JPEG"
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_undecodable_video_saves_nothing(self, mock_download):
+        """No thumbnail is stored when no frame can be cut."""
+        mock_download.return_value = (b"not a video", "mp4")
+        post = PostFactory()
+
+        assert post.download_thumbnail() is None
+        assert not Post.objects.get(pk=post.pk).thumbnail
+
+
+class TestPostProcessThumbnail(TestCase):
+    """Tests for the Post.process_thumbnail method."""
+
+    def setUp(self):
+        patcher = patch.object(
+            Post._meta.get_field("thumbnail"),  # noqa: SLF001
+            "storage",
+            InMemoryStorage(),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _post_with_thumbnail(self, size=(200, 100), exif=None):
+        buffer = BytesIO()
+        Image.new("RGB", size, color="red").save(buffer, "JPEG", exif=exif or b"")
+        post = PostFactory(blur_data_url="")
+        post.thumbnail.save("thumb.jpg", ContentFile(buffer.getvalue()), save=False)
+        Post.objects.filter(pk=post.pk).update(thumbnail=post.thumbnail.name)
+        return post
+
+    def test_saves_blur_and_size(self):
+        """Blur, width and height are stored without a history row."""
+        post = self._post_with_thumbnail()
+        history_count = post.history.count()
+
+        assert post.process_thumbnail() is True
 
         post.refresh_from_db()
-        assert post.is_flagged is True
-        assert post.moderation_result == {
-            "flagged": True,
-            "categories": {"violence": True},
-        }
-        assert post.moderated_at is not None
+        assert (post.width, post.height) == (200, 100)
+        blur = Image.open(BytesIO(base64.b64decode(post.blur_data_url)))
+        assert blur.format == "JPEG"
+        assert post.history.count() == history_count
 
-    @patch("instagram.models.post.moderate_image_content")
-    def test_moderate_content_success_not_flagged(self, mock_moderate):
-        """Test moderate_content saves is_flagged=False when content is clean."""
-        post = PostFactory(thumbnail_url="", raw_data=None)
-        post.thumbnail.save("thumb.jpg", _make_image_file(), save=True)
+    def test_size_follows_exif_orientation(self):
+        """A JPEG rotated by EXIF Orientation=6 is stored with the shown size."""
+        exif = Image.Exif()
+        exif[0x0112] = 6
+        post = self._post_with_thumbnail(exif=exif.tobytes())
 
-        mock_moderate.return_value = {"is_flagged": False, "categories": {}}
-
-        post.moderate_content()
+        post.process_thumbnail()
 
         post.refresh_from_db()
-        assert post.is_flagged is False
-        assert post.moderated_at is not None
+        assert (post.width, post.height) == (100, 200)
+
+    def test_without_thumbnail_returns_false(self):
+        """A post with no stored thumbnail is left alone."""
+        post = PostFactory(blur_data_url="")
+
+        assert post.process_thumbnail() is False
+        post.refresh_from_db()
+        assert post.blur_data_url == ""
+
+
+class TestPostGenerateEmbedding(TestCase):
+    """Tests for the Post.generate_embedding method."""
+
+    def _post_with_thumbnail(self):
+        post = PostFactory()
+        Post.objects.filter(pk=post.pk).update(thumbnail="posts/x/a.jpg")
+        post.refresh_from_db()
+        return post
+
+    def test_raises_without_thumbnail(self):
+        """A post without a stored thumbnail cannot be embedded."""
+        with pytest.raises(ValueError, match="Thumbnail file does not exist"):
+            PostFactory().generate_embedding()
+
+    @patch("instagram.models.post.generate_image_embedding")
+    def test_saves_embedding_and_tokens(self, mock_embed):
+        """The vector and token usage are stored without a history row."""
+        mock_embed.return_value = ([0.1] * 1536, 42)
+        post = self._post_with_thumbnail()
+        history_count = post.history.count()
+
+        assert len(post.generate_embedding()) == 1536  # noqa: PLR2004
+
+        post.refresh_from_db()
+        assert post.embedding_token_usage == 42  # noqa: PLR2004
+        assert len(post.embedding) == 1536  # noqa: PLR2004
+        assert post.history.count() == history_count
+        mock_embed.assert_called_once_with(post.thumbnail.url)
+
+    @patch("instagram.models.post.generate_image_embedding")
+    def test_wrong_dimensions_raise_before_saving(self, mock_embed):
+        """A vector that does not fit the column is rejected with a clear error."""
+        mock_embed.return_value = ([0.1] * 2048, 42)
+        post = self._post_with_thumbnail()
+
+        with pytest.raises(ValueError, match="2048 dimensions"):
+            post.generate_embedding()
+
+        post.refresh_from_db()
+        assert post.embedding is None
+
+    @patch("instagram.models.post.generate_image_embedding")
+    def test_api_errors_propagate(self, mock_embed):
+        """OpenRouter errors reach the caller and nothing is saved."""
+        mock_embed.side_effect = requests.RequestException("boom")
+        post = self._post_with_thumbnail()
+
+        with pytest.raises(requests.RequestException):
+            post.generate_embedding()
+
+
+def _medias():
+    return [
+        {
+            "type": "image",
+            "url": "https://cdn.example.com/a.jpg",
+            "width": "720",
+            "height": 900,
+        },
+        "not-a-dict",
+        {"type": "image"},
+        {
+            "type": "video",
+            "url": "https://cdn.example.com/b.mp4",
+            "width": 0,
+            "height": None,
+        },
+    ]
+
+
+class TestPostCreateMedia(TestCase):
+    """Tests for the Post.create_media method."""
+
+    def test_creates_rows_in_media_order(self):
+        """Usable items become rows keyed by index, with ids in that order."""
+        post = PostFactory(raw_data={"medias": _medias()})
+
+        assert post.create_media() == 2  # noqa: PLR2004
+
+        rows = list(PostMedia.objects.filter(post=post).order_by("id"))
+        assert [row.reference for row in rows] == ["0", "3"]
+        image, video = rows
+        assert image.thumbnail_url == image.media_url == "https://cdn.example.com/a.jpg"
+        assert (image.width, image.height) == (720, 900)
+        assert video.thumbnail_url == ""
+        assert video.media_url == "https://cdn.example.com/b.mp4"
+        assert (video.width, video.height) == (None, None)
+
+    def test_second_call_adds_nothing(self):
+        """Existing rows are skipped."""
+        post = PostFactory(raw_data={"medias": _medias()})
+        post.create_media()
+
+        post.create_media()
+
+        assert PostMedia.objects.filter(post=post).count() == 2  # noqa: PLR2004
+
+    def test_without_medias_returns_zero(self):
+        """raw_data without a medias list creates nothing."""
+        for raw_data in (None, {}, {"medias": None}):
+            post = PostFactory(raw_data=raw_data)
+
+            assert post.create_media() == 0
+            assert not PostMedia.objects.filter(post=post).exists()
+
+
+class TestPostMediaDownloadMedia(TestCase):
+    """Tests for the PostMedia.download_media method."""
+
+    def setUp(self):
+        self.storage = InMemoryStorage()
+        patcher = patch.object(
+            PostMedia._meta.get_field("media"),  # noqa: SLF001
+            "storage",
+            self.storage,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_downloads_and_saves_name(self, mock_download):
+        """The file is stored as is and its name written to the row."""
+        mock_download.return_value = (b"video-bytes", "mp4")
+        post_media = PostMediaFactory()
+
+        saved_name = post_media.download_media()
+
+        assert saved_name.endswith(".mp4")
+        assert PostMedia.objects.get(pk=post_media.pk).media.name == saved_name
+        mock_download.assert_called_once_with(post_media.media_url)
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_saves_size_from_the_file(self, mock_download):
+        """width and height come from the downloaded file."""
+        mock_download.return_value = (_make_video_bytes(), "mp4")
+        post_media = PostMediaFactory(width=None, height=None)
+
+        post_media.download_media()
+
+        post_media.refresh_from_db()
+        assert (post_media.width, post_media.height) == (32, 32)
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_unreadable_file_keeps_saveapi_size(self, mock_download):
+        """When the size cannot be read, the SaveAPI values stay."""
+        mock_download.return_value = (b"not media", "bin")
+        post_media = PostMediaFactory(width=720, height=1280)
+
+        post_media.download_media()
+
+        post_media.refresh_from_db()
+        assert (post_media.width, post_media.height) == (720, 1280)
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_skips_without_url_existing_file_or_failure(self, mock_download):
+        """Nothing is saved without a URL, with a file, or when download fails."""
+        assert PostMediaFactory(media_url="").download_media() is None
+        existing = PostMediaFactory()
+        existing.media.name = "posts/x/a.mp4"
+        assert existing.download_media() is None
+        mock_download.assert_not_called()
+
+        mock_download.return_value = (None, None)
+        failed = PostMediaFactory()
+        assert failed.download_media() is None
+        assert not PostMedia.objects.get(pk=failed.pk).media
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_loser_of_race_deletes_its_file(self, mock_download):
+        """If another worker saved a file first, the new file is removed."""
+        mock_download.return_value = (b"video-bytes", "mp4")
+        post_media = PostMediaFactory()
+        PostMedia.objects.filter(pk=post_media.pk).update(media="posts/x/winner.mp4")
+
+        assert post_media.download_media() is None
+        assert (
+            PostMedia.objects.get(pk=post_media.pk).media.name == "posts/x/winner.mp4"
+        )
+        _, files = self.storage.listdir(f"posts/{post_media.post.user.username}")
+        assert files == []
+
+
+class TestPostMediaGenerateThumbnail(TestCase):
+    """Tests for the PostMedia.generate_thumbnail method."""
+
+    def setUp(self):
+        self.storage = InMemoryStorage()
+        for field in ("media", "thumbnail"):
+            patcher = patch.object(
+                PostMedia._meta.get_field(field),  # noqa: SLF001
+                "storage",
+                self.storage,
+            )
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _with_media(self, content, name):
+        post_media = PostMediaFactory()
+        post_media.media.save(name, ContentFile(content), save=False)
+        PostMedia.objects.filter(pk=post_media.pk).update(media=post_media.media.name)
+        return post_media
+
+    def _jpeg(self):
+        buffer = BytesIO()
+        Image.new("RGB", (20, 10)).save(buffer, "JPEG")
+        return buffer.getvalue()
+
+    def _stored_files(self, post_media):
+        return self.storage.listdir(f"posts/{post_media.post.user.username}")[1]
+
+    def test_image_is_its_own_thumbnail(self):
+        """An image row points thumbnail at the media file without a new upload."""
+        post_media = self._with_media(self._jpeg(), "a.jpg")
+
+        name = post_media.generate_thumbnail()
+
+        assert name == post_media.media.name
+        assert PostMedia.objects.get(pk=post_media.pk).thumbnail.name == name
+        assert len(self._stored_files(post_media)) == 1
+
+    def test_video_gets_a_jpeg_frame(self):
+        """A video, even one stored as .bin, gets one JPEG frame as thumbnail."""
+        for name in ("clip.mp4", "clip.bin"):
+            post_media = self._with_media(_make_video_bytes(), name)
+
+            thumbnail = post_media.generate_thumbnail()
+
+            assert thumbnail.endswith(".jpg")
+            with self.storage.open(thumbnail) as stored:
+                assert Image.open(stored).format == "JPEG"
+
+    def test_skips_without_media_or_with_thumbnail(self):
+        """Nothing happens without a media file or when a thumbnail exists."""
+        assert PostMediaFactory().generate_thumbnail() is None
+        post_media = self._with_media(self._jpeg(), "a.jpg")
+        post_media.thumbnail.name = "posts/x/existing.jpg"
+        assert post_media.generate_thumbnail() is None
+
+    def test_unreadable_file_saves_nothing(self):
+        """A file that is neither an image nor a decodable video is left alone."""
+        post_media = self._with_media(b"not media", "a.bin")
+
+        assert post_media.generate_thumbnail() is None
+        assert not PostMedia.objects.get(pk=post_media.pk).thumbnail
+
+    def test_missing_file_returns_none(self):
+        """A media name whose file is gone from storage does not raise."""
+        post_media = PostMediaFactory()
+        PostMedia.objects.filter(pk=post_media.pk).update(media="posts/x/gone.mp4")
+        post_media.refresh_from_db()
+
+        assert post_media.generate_thumbnail() is None
+
+    def test_lost_race_deletes_only_the_new_frame(self):
+        """A frame uploaded by the losing worker is deleted; media files stay."""
+        video = self._with_media(_make_video_bytes(), "clip.mp4")
+        image = self._with_media(self._jpeg(), "a.jpg")
+        for row in (video, image):
+            PostMedia.objects.filter(pk=row.pk).update(thumbnail="posts/x/winner.jpg")
+
+        assert video.generate_thumbnail() is None
+        assert image.generate_thumbnail() is None
+        assert self.storage.exists(video.media.name)
+        assert self.storage.exists(image.media.name)
+        assert len(self._stored_files(video)) == 1

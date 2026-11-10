@@ -1,9 +1,13 @@
+import base64
+from io import BytesIO
 from unittest.mock import Mock
 from unittest.mock import patch
 
 from celery.result import EagerResult
+from django.core.files.base import ContentFile
 from django.test import TestCase
 from django.test import override_settings
+from PIL import Image
 
 from instagram.models import Story
 from instagram.tasks import auto_generate_story_blur_data_urls
@@ -11,18 +15,35 @@ from instagram.tasks import story_generate_blur_data_url
 from instagram.tests.factories import StoryFactory
 
 
+def _story_with_thumbnail():
+    """Return a story with a stored 200x100 JPEG thumbnail and no blur."""
+    buffer = BytesIO()
+    Image.new("RGB", (200, 100), color="red").save(buffer, format="JPEG")
+    story = StoryFactory(blur_data_url="")
+    story.thumbnail.save("thumb.jpg", ContentFile(buffer.getvalue()), save=False)
+    Story.objects.filter(pk=story.pk).update(thumbnail=story.thumbnail.name)
+    return story
+
+
+def _queueable_story(**kwargs):
+    """Return a story whose thumbnail name is set, for the periodic tests."""
+    story = StoryFactory(**kwargs)
+    Story.objects.filter(pk=story.pk).update(thumbnail="stories/a.jpg")
+    return story
+
+
 class TestStoryGenerateBlurDataUrl(TestCase):
     """Tests for the story_generate_blur_data_url Celery task."""
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.tasks.story.generate_blur_data_url_from_image_url")
+    @patch("instagram.tasks.story.generate_blur_data_url_from_image")
     def test_story_generate_blur_data_url_success(
         self,
         mock_generate_blur,
     ):
         """Test successful blur data URL generation and saving."""
         # Create a test story
-        story = StoryFactory(blur_data_url="")
+        story = _story_with_thumbnail()
 
         # Mock the utility function
         mock_generate_blur.return_value = "base64encodedstring"
@@ -55,14 +76,14 @@ class TestStoryGenerateBlurDataUrl(TestCase):
         assert "not found" in result.result["error"].lower()
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.tasks.story.generate_blur_data_url_from_image_url")
+    @patch("instagram.tasks.story.generate_blur_data_url_from_image")
     def test_story_generate_blur_data_url_saves_to_model(
         self,
         mock_generate_blur,
     ):
         """Test that blur_data_url is correctly saved to the Story model."""
         # Create a test story
-        story = StoryFactory(blur_data_url="")
+        story = _story_with_thumbnail()
 
         # Mock the utility function with a specific value
         test_blur_data = "test_base64_encoded_blur_data"
@@ -76,13 +97,13 @@ class TestStoryGenerateBlurDataUrl(TestCase):
         assert story.blur_data_url == test_blur_data
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.tasks.story.generate_blur_data_url_from_image_url")
+    @patch("instagram.tasks.story.generate_blur_data_url_from_image")
     def test_story_generate_blur_data_url_error_fails_without_retry(
         self,
         mock_generate_blur,
     ):
         """An error fails the task once and leaves blur_data_url empty."""
-        story = StoryFactory(blur_data_url="")
+        story = _story_with_thumbnail()
         mock_generate_blur.side_effect = Exception("Network timeout")
 
         result = story_generate_blur_data_url.delay(story.story_id)
@@ -94,15 +115,15 @@ class TestStoryGenerateBlurDataUrl(TestCase):
         assert story.blur_data_url == ""
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.tasks.story.generate_blur_data_url_from_image_url")
+    @patch("instagram.tasks.story.generate_blur_data_url_from_image")
     def test_story_generate_blur_data_url_keeps_concurrent_file_update(
         self,
         mock_generate_blur,
     ):
         """A media file saved while the blur runs is not overwritten."""
-        story = StoryFactory(blur_data_url="")
+        story = _story_with_thumbnail()
 
-        def download_finishes_meanwhile(_url):
+        def download_finishes_meanwhile(_img):
             Story.objects.filter(pk=story.pk).update(media="stories/a.mp4")
             return "data:image/jpeg;base64,abc"
 
@@ -126,9 +147,9 @@ class TestAutoGenerateStoryBlurDataUrls(TestCase):
     ):
         """Test successful queuing of blur data URL generation tasks."""
         # Create stories without blur_data_url
-        StoryFactory(blur_data_url="")
-        StoryFactory(blur_data_url="")
-        StoryFactory(blur_data_url="")
+        _queueable_story(blur_data_url="")
+        _queueable_story(blur_data_url="")
+        _queueable_story(blur_data_url="")
 
         # Create a story with blur_data_url (should be skipped)
         StoryFactory(blur_data_url="existing_blur_data")
@@ -174,7 +195,7 @@ class TestAutoGenerateStoryBlurDataUrls(TestCase):
     ):
         """Test that only stories without blur_data_url are processed."""
         # Create stories with and without blur_data_url
-        story_without_blur = StoryFactory(blur_data_url="")
+        story_without_blur = _queueable_story(blur_data_url="")
         StoryFactory(blur_data_url="has_blur_data")
 
         # Mock the task delay
@@ -200,8 +221,8 @@ class TestAutoGenerateStoryBlurDataUrls(TestCase):
     ):
         """Test error handling when queuing tasks fails."""
         # Create stories without blur_data_url
-        StoryFactory(blur_data_url="")
-        StoryFactory(blur_data_url="")
+        _queueable_story(blur_data_url="")
+        _queueable_story(blur_data_url="")
 
         # Mock the task delay to raise an exception for the first story
         mock_task_delay.side_effect = [
@@ -232,3 +253,29 @@ class TestAutoGenerateStoryBlurDataUrls(TestCase):
         assert isinstance(result, EagerResult)
         assert result.result["success"] is True
         assert result.result["queued"] == 0
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    @patch("instagram.tasks.story_generate_blur_data_url.delay")
+    def test_story_with_only_thumbnail_url_is_not_queued(self, mock_task_delay):
+        """A story whose thumbnail was never stored is skipped."""
+        StoryFactory(blur_data_url="")
+
+        result = auto_generate_story_blur_data_urls.delay()
+
+        assert result.result["queued"] == 0
+        mock_task_delay.assert_not_called()
+
+
+class TestStoryBlurFromStoredFile(TestCase):
+    """The blur is built from the stored thumbnail, not a URL."""
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_blur_is_jpeg_from_stored_file(self):
+        story = _story_with_thumbnail()
+
+        story_generate_blur_data_url.delay(story.story_id)
+
+        story.refresh_from_db()
+        blur = Image.open(BytesIO(base64.b64decode(story.blur_data_url)))
+        assert blur.format == "JPEG"
+        assert blur.size == (4, 2)

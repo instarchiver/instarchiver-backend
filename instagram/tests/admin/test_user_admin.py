@@ -92,7 +92,7 @@ class TestInstagramUserAdminActions(TestCase):
         assert len(messages) == 1
         assert "Failed to queue story update" in str(messages[0])
 
-    @patch("instagram.admin.user.User.update_posts_from_api_async")
+    @patch("instagram.admin.user.User.update_posts_from_api_async", create=True)
     def test_update_posts_from_api_success(self, mock_async):
         """Test update_posts_from_api action queues task and redirects."""
         mock_result = MagicMock()
@@ -109,7 +109,7 @@ class TestInstagramUserAdminActions(TestCase):
         assert len(messages) == 1
         assert "Successfully queued" in str(messages[0])
 
-    @patch("instagram.admin.user.User.update_posts_from_api_async")
+    @patch("instagram.admin.user.User.update_posts_from_api_async", create=True)
     def test_update_posts_from_api_error(self, mock_async):
         """Test update_posts_from_api action handles errors gracefully."""
         mock_async.side_effect = Exception("Celery down")

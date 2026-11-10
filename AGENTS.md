@@ -39,6 +39,18 @@ Every plan gets an evil reviewer pass before it is presented or executed. This c
 
 The evil reviewer is a fresh-context subagent run through the `agent-skills:doubt-driven-development` skill. Give it the plan and the relevant code, and tell it to attack the plan: wrong assumptions about the codebase, missing steps, migrations or data that could break, Celery/signal side effects, security holes, and simpler alternatives that were skipped.
 
+The reviewer checks every library or API claim in the plan against Context7 (`resolve-library-id`, then `query-docs`) before accepting it. That covers Django, DRF, Celery, drf-spectacular, Stripe, the OpenAI SDK, and any external API the plan calls. Write this into the reviewer's prompt instead of relying on it to pick up this file. A claim that contradicts the docs is a finding, and so is one Context7 can't confirm. If Context7 isn't available, the reviewer says so in its report.
+
+The reviewer also hunts for edge cases the plan doesn't handle, and each finding names the input or state that breaks it. A finding without a concrete failure scenario gets dropped. Check at least:
+
+- empty, null, or malformed input, including external API responses with missing fields
+- duplicates and races: two workers or requests on the same row, a webhook or Telegram update delivered twice, unique constraints
+- Celery retries: whether the task is idempotent, what a failure halfway through leaves behind, and what happens when the task runs again
+- existing production rows that don't fit the new schema or code path, and whether the migration can be reversed
+- external failures: timeouts, rate limits, and 4xx/5xx responses from SaveAPI, the Core API, Telegram, Stripe, and OpenAI
+- permissions: who can reach the new code path, and whether it can expose another user's data
+- timezones, large tables, and pagination, where the plan touches them
+
 After the review:
 
 - Fix the plan for every valid finding.
@@ -220,16 +232,11 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 - Retrieves configuration from `CoreAPISetting` singleton
 - All requests include timing, status, headers, and error tracking
 
-**Instagram API Utilities** ([core/utils/instagram_api.py](core/utils/instagram_api.py)):
-- `fetch_user_posts_by_username()` - Get a page of posts by Instagram user ID
-- `fetch_post_by_id()` - Get a single post by ID
-- All functions use the Core API client under the hood
-
 **SaveAPI Client** ([core/utils/saveapi.py](core/utils/saveapi.py)):
-- Stories and profiles come only from SaveAPI. Posts still use the Core API
+- Stories, profiles and posts all come from SaveAPI. `fetch_post_detail()` calls `/v1/download` with a post URL and `full_meta=true`
 - `fetch_user_stories()` calls `/v1/download` with the user's story URL. `fetch_user_profile()` calls `/v1/instagram/profile?username=`. Each request is logged to `APIRequestLog` with the `Authorization` header masked
 - Configure it with `saveapi_url` and `saveapi_api_key` on `CoreAPISetting`
-- Profiles can only be looked up by username. `User.update_profile_from_api()` raises `SaveAPIError` with code `ID_MISMATCH` when the returned id differs from the stored `instagram_id` (the username now belongs to another account), and `DUPLICATE_ACCOUNT` when the returned id or username is already on another row. Neither is retried. `recent_posts` and `credits` are dropped before the response is stored in `raw_api_data`
+- Profiles can only be looked up by username. `User.update_profile_from_api()` raises `SaveAPIError` with code `ID_MISMATCH` when the returned id differs from the stored `instagram_id` (the username now belongs to another account), and `DUPLICATE_ACCOUNT` when the returned id or username is already on another row. Neither is retried. `credits` is dropped before the response is stored in `raw_api_data`
 - HTTP errors are raised as `SaveAPIError` with `code`, `status_code`, `retryable` and `retry_after` (the Retry-After header in seconds, or None). `is_rate_limited` is True for a 429 or the `RATE_LIMITED` code. Story and profile tasks retry only when `is_retryable_error()` returns True, which covers timeouts, connection errors, 429/5xx and the `RATE_LIMITED` code
 - When SaveAPI rate limits a story or profile task and sends Retry-After, the task queues itself again with `apply_async(countdown=retry_after)`, with no attempt limit. Without the header, or in eager mode, it uses the normal `task.retry()` backoff
 - The module has no type hints. Argument and return types are written in the docstrings
@@ -247,23 +254,25 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 **Task Examples** ([instagram/tasks/](instagram/tasks/)):
 
 - `update_profile_picture_from_url()` - Downloads and updates profile pictures using hash comparison to detect actual content changes; configured with retries (max 3, 60s delay)
-- `story_generate_blur_data_url()` / `auto_generate_story_blur_data_urls()` - Blur placeholders for stories
+- `story_generate_blur_data_url()` / `auto_generate_story_blur_data_urls()` - Blur placeholders for stories, built from the stored `thumbnail` file. Stories that only have a `thumbnail_url` are skipped
 - `generate_story_embedding()` / `periodic_generate_story_embeddings()` - pgvector embeddings from thumbnail images
 - `moderate_story_content()` / `periodic_moderate_story_content()` - OpenAI moderation API flagging
-- Equivalent periodic tasks exist for Posts
+- `download_post_thumbnail_from_url()` / `periodic_download_post_thumbnails()` - Download a post's `thumbnail_url` into `thumbnail`. `thumbnail_url` is the first media item's URL, not `meta.thumbnail`, which is sometimes the video. When it is a video, the whole file is downloaded and one frame is stored as a JPEG. Instagram CDN URLs expire, so the periodic task only queues posts archived in the last 7 days. Nothing else queues the download, so new posts wait for the next run. The task doesn't retry a failed download; the next periodic run queues it again, so schedule that task hourly
+- `process_post_thumbnail()` / `periodic_process_post_thumbnails()` - Fill a post's `blur_data_url`, `width` and `height` from the stored `thumbnail` file once the download task has saved it. The size follows the EXIF orientation, and the blur is always a JPEG
+- `generate_post_embedding()` / `periodic_generate_post_embeddings()` - pgvector embeddings of a post's stored `thumbnail` through OpenRouter. Each run queues the newest 500 posts at most, because every call is paid, and skips old thumbnails stored as video files
+- `create_post_media()` / `periodic_create_post_media()` - Create one `PostMedia` row per item in `Post.raw_data["medias"]`, with the item's index as `reference`. Images get their URL as `thumbnail_url`; videos get none. Posts whose first media item has no URL are skipped. `save_post_from_saveapi()` already creates the rows for a new post in the same transaction as the post, so the periodic task only fills in older posts
+- `download_post_media_from_url()` / `periodic_download_post_media()` - Download `PostMedia.media_url` into `media`, videos included. `width` and `height` are read from the downloaded file; when it can't be read, the SaveAPI values stay. Like the post thumbnail, only media of posts archived in the last 7 days are queued
+- `generate_post_media_thumbnail()` / `periodic_generate_post_media_thumbnails()` - Fill `PostMedia.thumbnail` from the stored `media` file, so it works after the CDN URL expires. An image is its own thumbnail (both fields point at the same file); a video gets one JPEG frame. The file is tried as an image first, so a video saved as `.bin` is still handled. Each run queues the newest 500 rows of posts archived in the last 14 days, so a file that never yields a thumbnail is not read forever
+- Post tasks only trigger work: each regular task in `instagram/tasks/post.py` is one call to a classmethod on `Post` or `PostMedia` (for example `Post.process_thumbnail_by_id()`), which holds the lookup and the result dict. The `NEEDS_*` filters live in `instagram/models/post.py`
+- Each file in `instagram/tasks/` lists regular tasks first, then periodic (Celery Beat) tasks below a separator comment. Add new tasks to the matching section
 
 ### AI Features
 
-Both `Story` and `Post` models have AI-enrichment fields populated by Celery tasks:
+`Story` and `Post` both have AI-enrichment fields. Both get thumbnail embeddings from Celery tasks; only stories are moderated so far:
 
 **Story pipeline:**
 
 1. **embedding** (`VectorField`, 1536 dimensions, pgvector) — Vector embedding generated directly from the thumbnail image via OpenRouter. Generated by `generate_story_embedding()`.
-
-**Post pipeline:**
-
-1. **thumbnail_insight** (`TextField`) — OpenAI Vision API description of the thumbnail image. Generated by `generate_post_thumbnail_insight()`. Images are resized to 50% and JPEG-compressed at 60% before sending to reduce token usage.
-2. **embedding** (`VectorField`, 1536 dimensions, pgvector) — Text embedding from `thumbnail_insight` using `text-embedding-3-small`. Requires `thumbnail_insight` to be populated first.
 
 **Similarity search** — `StorySimilarView` at `/instagram/stories/<id>/similar/` and `PostSimilarView` at `/instagram/posts/<id>/similar/` return ranked results using L2Distance. Requires the `pgvector` PostgreSQL extension.
 
@@ -277,14 +286,14 @@ Stories and Posts use `InstagramModerationMixin` ([instagram/models/mixins.py](i
 - `moderation_result` (JSONField — raw OpenAI moderation response)
 - `moderated_at` (DateTimeField)
 
-Moderation is triggered by `moderate_story_content()` / `moderate_post_content()` Celery tasks, which call `moderate_image_content()` from `core/utils/openai.py` using OpenAI's `omni-moderation-latest` model. Requires `thumbnail` to be present.
+Moderation is triggered by the `moderate_story_content()` Celery task, which calls `moderate_image_content()` from `core/utils/openai.py` using OpenAI's `omni-moderation-latest` model. It requires `thumbnail` to be present. Posts have no moderation task yet.
 
 ### Signal Handlers
 
 [instagram/signals/](instagram/signals/) contains `post_save` receivers that automatically download media files when objects are created with URL fields:
 
 - `story.py` — downloads `thumbnail_url` → `thumbnail` and `media_url` → `media`
-- `post.py`, `post_media.py`, `user.py` — similar patterns for posts and profile pictures
+- `user.py` — downloads profile pictures
 
 The download utility `download_file_from_url()` is in [core/utils/download.py](core/utils/download.py).
 

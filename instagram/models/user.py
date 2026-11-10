@@ -1,15 +1,20 @@
 import hashlib
 import logging
 import uuid
+from datetime import UTC
+from datetime import datetime
 from urllib.parse import urlparse
 
+import requests
+from django.db import DatabaseError
 from django.db import models
+from django.db import transaction
 from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
-from core.utils.instagram_api import fetch_user_posts_by_username
 from core.utils.saveapi import RETRYABLE_ERROR_CODES
 from core.utils.saveapi import SaveAPIError
+from core.utils.saveapi import fetch_post_detail
 from core.utils.saveapi import fetch_user_profile
 from core.utils.saveapi import fetch_user_stories as fetch_user_stories_from_saveapi
 from instagram.constants import PROFILE_DUPLICATE_ACCOUNT
@@ -23,120 +28,205 @@ logger = logging.getLogger(__name__)
 class GetUserPostMixIn:
     """Mixin class to add post-related functionality to User model."""
 
-    def get_post_data_from_api(self, max_id: str | None = None):
-        """Fetch user posts from Instagram API with pagination support.
+    def get_post_urls(self):
+        """Return the url, id and shortcode of each post in recent_posts.
 
-        Args:
-            max_id: Optional pagination cursor for fetching next page
-
-        Returns:
-            tuple: (list of posts, next_max_id or None)
-        """
-        if not self.instagram_id:
-            msg = f"User {self.username} has no Instagram ID"
-            raise ValueError(msg)
-
-        response = fetch_user_posts_by_username(self.instagram_id, max_id=max_id)
-        data = response.get("data", {})
-        items = data.get("items", [])
-        next_max_id = data.get("next_max_id")
-        logger.info(
-            "Fetched %d posts for user %s (next_max_id: %s)",
-            len(items),
-            self.username,
-            next_max_id or "None",
-        )
-        return items, next_max_id
-
-    def _update_post_data_from_api(self, max_id: str | None = None) -> dict:
-        """Fetch and save user posts with pagination support.
-
-        This method iteratively fetches all pages of posts using the max_id cursor.
-
-        Args:
-            max_id: Optional pagination cursor for fetching next page
+        recent_posts comes from the SaveAPI profile response stored in
+        raw_api_data. A missing key comes back as None.
 
         Returns:
-            dict: Summary with total_posts, pages_fetched, and last_max_id
+            list[dict]: one dict per post with url, id and shortcode keys
         """
-        from instagram.models import Post  # noqa: PLC0415
+        raw = self.raw_api_data
+        recent_posts = raw.get("recent_posts") if isinstance(raw, dict) else None
+        if not isinstance(recent_posts, list):
+            return []
+        return [
+            {
+                "url": post.get("url"),
+                "id": post.get("id"),
+                "shortcode": post.get("shortcode"),
+            }
+            for post in recent_posts
+            if isinstance(post, dict)
+        ]
 
-        total_posts = 0
-        pages_fetched = 0
-        current_max_id = max_id
-        last_max_id = max_id
+    def fetch_post_details(self):
+        """Fetch full post details from SaveAPI for each post in get_post_urls().
 
-        while True:
-            posts, next_max_id = self.get_post_data_from_api(max_id=current_max_id)
-            posts_saved = 0
+        Each post costs one SaveAPI request. A post that fails (an error
+        response, a timeout or a 5xx) is logged and skipped, not retried, so
+        one bad post doesn't lose the rest. Rate limits are raised so the
+        caller can back off and try again later.
 
-            # Save posts from current page
-            for post in posts:
-                defaults = {
-                    "user": self,
-                    "raw_data": post,
-                    "thumbnail_url": post.get("display_uri") or "",
-                    "caption": (
-                        post.get("caption").get("text") if post.get("caption") else ""
-                    ),
-                }
-                # Convert epoch timestamp to timezone-aware datetime
-                taken_at = post.get("taken_at")
-                if taken_at:
-                    defaults["post_created_at"] = timezone.datetime.fromtimestamp(
-                        taken_at,
-                        tz=timezone.get_current_timezone(),
+        Responses are yielded one at a time, so a caller can save each post
+        before the next request. A rate limit then keeps the posts already
+        paid for.
+
+        Yields:
+            dict: SaveAPI response for each post that was fetched
+
+        Raises:
+            SaveAPIError: if SaveAPI rate limits the request
+        """
+        for post in self.get_post_urls():
+            url = post["url"]
+            if not url:
+                continue
+            try:
+                response = fetch_post_detail(url)
+                if not isinstance(response, dict):
+                    logger.warning(
+                        "Skipping post %s of user %s: response is not an object",
+                        url,
+                        self.username,
                     )
-                Post.objects.update_or_create(
-                    id=post.get("pk"),
-                    defaults=defaults,
-                )
-                posts_saved += 1
+                    continue
+                if not response.get("success"):
+                    error = response.get("error") or {}
+                    code = error.get("code") or "UNKNOWN"
+                    raise SaveAPIError(  # noqa: TRY301
+                        code,
+                        error.get("message") or "no error message",
+                        retryable=code in RETRYABLE_ERROR_CODES,
+                    )
+            except SaveAPIError as e:
+                if e.is_rate_limited:
+                    raise
+                logger.warning("Skipping post %s of user %s: %s", url, self.username, e)
+                continue
+            except requests.RequestException as e:
+                logger.warning("Skipping post %s of user %s: %s", url, self.username, e)
+                continue
+            yield response
 
-            total_posts += posts_saved
-            pages_fetched += 1
-            last_max_id = current_max_id
+    @staticmethod
+    def _get_post_type(response):
+        """Return the Post variant constant for a SaveAPI post response.
 
-            logger.info(
-                "Saved %d posts for user %s (current page)",
-                posts_saved,
-                self.username,
-            )
+        Args:
+            response (dict): SaveAPI /v1/download response
 
-            if not next_max_id:
-                break
+        Returns:
+            str: Post.POST_VARIANT_CAROUSEL, Post.POST_VARIANT_VIDEO or
+            Post.POST_VARIANT_NORMAL
 
-            logger.info(
-                "Fetching next page for user %s with max_id: %s",
-                self.username,
-                next_max_id,
-            )
-            current_max_id = next_max_id
-
-        return {
-            "total_posts": total_posts,
-            "pages_fetched": pages_fetched,
-            "last_max_id": last_max_id,
-        }
-
-    def update_post_data_from_api(self):
-        """Update user posts from Instagram API synchronously.
-
-        Note: This method is deprecated. Use update_posts_from_api_async() instead
-        for better performance with pagination support.
+        Raises:
+            ValueError: if the response type is missing or unknown
         """
-        result = self._update_post_data_from_api()
-        logger.info(
-            "Updated %d posts across %d pages for user %s",
-            result["total_posts"],
-            result["pages_fetched"],
-            self.username,
-        )
+        from .post import Post  # noqa: PLC0415
+
+        post_type = response.get("type") if isinstance(response, dict) else None
+        variants = {
+            "album": Post.POST_VARIANT_CAROUSEL,
+            "video": Post.POST_VARIANT_VIDEO,
+            "image": Post.POST_VARIANT_NORMAL,
+        }
+        if not isinstance(post_type, str) or post_type not in variants:
+            msg = f"Unknown post type: {post_type!r}"
+            raise ValueError(msg)
+        return variants[post_type]
+
+    def save_post_from_saveapi(self, response):
+        """Save one SaveAPI post detail response as a Post owned by this user.
+
+        The Post id is the response's video_id, which is the Instagram media
+        pk. A post that already exists is left as it is: raw_data holds signed
+        CDN URLs that change on every fetch, so re-saving would only add
+        history rows. That also keeps the first owner of a collab post.
+
+        thumbnail_url is the URL of the first media item, image or video.
+        Post.download_thumbnail cuts a frame when it is a video.
+
+        A new post and its PostMedia rows are saved in one transaction, so a
+        failure leaves neither behind.
+
+        Args:
+            response (dict): SaveAPI /v1/download response from
+                fetch_post_details()
+
+        Returns:
+            Post | None: the new or existing post, or None if the response
+            has no video_id
+
+        Raises:
+            ValueError: if the response has an unknown post type
+            DatabaseError: if the post or its media cannot be saved
+        """
+        from .post import Post  # noqa: PLC0415
+
+        post_id = response.get("video_id")
+        if not post_id:
+            logger.warning(
+                "Skipping post of user %s: response has no video_id",
+                self.username,
+            )
+            return None
+
+        meta = response.get("meta") or {}
+        # meta.thumbnail is sometimes the video URL, so use the first media.
+        medias = response.get("medias")
+        first_media = medias[0] if isinstance(medias, list) and medias else {}
+        thumbnail_url = (
+            first_media.get("url") if isinstance(first_media, dict) else None
+        ) or ""
+        defaults = {
+            "user": self,
+            "variant": self._get_post_type(response),
+            "caption": meta.get("text") or "",
+            "thumbnail_url": thumbnail_url,
+            # credits is billing data, not post data.
+            "raw_data": {
+                key: value for key, value in response.items() if key != "credits"
+            },
+        }
+        published_at = meta.get("published_at")
+        if isinstance(published_at, (int, float)):
+            defaults["post_created_at"] = datetime.fromtimestamp(published_at, tz=UTC)
+
+        with transaction.atomic():
+            post, created = Post.objects.get_or_create(
+                id=str(post_id),
+                defaults=defaults,
+            )
+            if created:
+                post.create_media()
+        return post
+
+    def update_posts_from_api(self):
+        """Fetch and save each post in recent_posts from the API.
+
+        Posts with an unknown type, or that fail to save, are logged and
+        skipped so one bad item does not block the rest. Rate limits from
+        fetch_post_details() propagate so the caller can back off.
+
+        Returns:
+            list[Post]: posts from the response, new and existing
+
+        Raises:
+            SaveAPIError: if the API rate limits the request
+        """
+        saved_posts = []
+        for response in self.fetch_post_details():
+            try:
+                post = self.save_post_from_saveapi(response)
+            except (ValueError, DatabaseError) as e:
+                logger.warning(
+                    "Skipping post %s of user %s: %s",
+                    response.get("video_id"),
+                    self.username,
+                    e,
+                )
+                continue
+            if post is not None:
+                saved_posts.append(post)
+        return saved_posts
 
     def update_posts_from_api_async(self):
-        """
-        Trigger asynchronous update of user posts from Instagram API.
-        Use this method to queue the post update as a background task.
+        """Queue a background task that updates user posts from the API.
+
+        Returns:
+            AsyncResult: the queued task
         """
         from instagram.tasks import update_user_posts_from_api  # noqa: PLC0415
 
@@ -391,13 +481,13 @@ class User(GetUserPostMixIn, GetUserStoryMixIn, ViewCountMixin):
 
         self._check_profile_conflicts(response)
 
-        # recent_posts holds signed URLs that change on every request, which
-        # would bloat the history table, and credits is billing data.
+        # credits is billing data, not profile data.
         self.raw_api_data = {
-            key: value
-            for key, value in response.items()
-            if key not in {"credits", "recent_posts"}
+            key: value for key, value in response.items() if key != "credits"
         }
         self._extract_api_data_from_saveapi(response)
         self.api_updated_at = timezone.now()
         self.save()
+
+        ## Queue a background task to update posts after the user profile is updated.
+        transaction.on_commit(self.update_posts_from_api_async)

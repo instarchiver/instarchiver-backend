@@ -157,3 +157,9 @@ def fetch_user_stories(username):
     """Fetch the active stories (dict) of an Instagram username (str)."""
     logger.info("Fetching stories from SaveAPI for username: %s", username)
     return download(f"https://www.instagram.com/stories/{username}/")
+
+
+def fetch_post_detail(url, timeout=60):
+    """Fetch a post (dict) with full metadata from its Instagram URL (str)."""
+    logger.info("Fetching post detail from SaveAPI for url: %s", url)
+    return _get("/v1/download", {"url": url, "full_meta": "true"}, timeout)
