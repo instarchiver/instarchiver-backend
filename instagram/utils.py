@@ -5,7 +5,6 @@ from urllib.parse import urlparse
 
 import av
 import requests
-from PIL import Image as PILImage
 from rest_framework import status
 
 from core.utils.openrouter import classify
@@ -48,53 +47,27 @@ def download_file_from_url(url, timeout=30):
         return None, None
 
 
-def generate_blur_data_url_from_image_url(
-    image_url: str,
-    resize_percentage: float = 0.02,
-) -> str:
-    """
-    Generates a blurred data URL from an image URL.
+def generate_blur_data_url_from_image(img, resize_percentage=0.02):
+    """Shrink an opened image and return it as a base64 JPEG string.
 
-    This function retrieves an image from the provided URL,
-    resizes it to a specified percentage of its original dimensions,
-    converts it to a base64 string, and returns it.
+    The output is always JPEG, because the frontend labels every blur as
+    image/jpeg. Each side is at least 1px.
 
     Args:
-        image_url (str): The URL of the image to process
-        resize_percentage (float): Percentage to resize (default: 0.02 = 2%)
+        img (PIL.Image.Image): the image to shrink
+        resize_percentage (float): share of the original size to keep
 
     Returns:
-        str: Base64 encoded string of the resized image
-
-    Raises:
-        requests.exceptions.RequestException: If there's an error fetching the image
-        IOError: If there's an error processing the image
+        str: base64 encoded JPEG
     """
-    logger.info("Generating blur data URL from image URL: %s", image_url)
-
-    # Fetch the image from URL using requests
-    response = requests.get(image_url, timeout=30)
-    response.raise_for_status()  # Raise exception for HTTP errors
-
-    # Open the image from the response content
-    img = PILImage.open(BytesIO(response.content))
-
-    # Calculate new dimensions
     width, height = img.size
-    new_width = int(width * resize_percentage)
-    new_height = int(height * resize_percentage)
-
-    # Resize the image
-    resized_img = img.resize((new_width, new_height))
-
-    # Convert to base64
+    new_size = (
+        max(1, int(width * resize_percentage)),
+        max(1, int(height * resize_percentage)),
+    )
     buffer = BytesIO()
-    img_format = img.format or "JPEG"
-    resized_img.save(buffer, format=img_format)
-    base64_string = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-    logger.info("Successfully generated blur data URL")
-    return base64_string
+    img.convert("RGB").resize(new_size).save(buffer, format="JPEG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
 def extract_video_frame(file_obj, at_seconds: float = 1.0) -> bytes | None:

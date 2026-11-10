@@ -332,7 +332,7 @@ class TestStoriesWithoutThumbnailAreSkipped(TestCase):
         mock_delay.assert_not_called()
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
-    @patch("instagram.tasks.story.generate_blur_data_url_from_image_url")
+    @patch("instagram.tasks.story.generate_blur_data_url_from_image")
     def test_single_blur_task_returns_without_image(self, mock_generate):
         result = story_generate_blur_data_url.delay(self.story.story_id)
 

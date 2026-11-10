@@ -335,7 +335,7 @@ class TestUserSavePostFromSaveapi(TestCase):
         assert post.user == user
         assert post.variant == Post.POST_VARIANT_NORMAL
         assert post.caption == "Just a pause."
-        assert post.thumbnail_url == "https://cdn.example.com/thumb.jpg"
+        assert post.thumbnail_url == "https://cdn.example.com/full.jpg"
         assert post.post_created_at == datetime.fromtimestamp(1794276049, tz=UTC)
         assert "credits" not in post.raw_data
         assert post.raw_data["video_id"] == "4027001720088057574"
@@ -377,14 +377,27 @@ class TestUserSavePostFromSaveapi(TestCase):
         assert post.caption == "old"
         assert Post.objects.count() == 1
 
-    def test_missing_thumbnail_defaults_to_empty_string(self):
-        """Without meta.thumbnail the post is saved with an empty thumbnail_url."""
+    def test_video_thumbnail_url_is_the_video(self):
+        """A video post keeps its first media URL, even if meta.thumbnail differs."""
         user = InstagramUserFactory()
-        response = _saveapi_post(meta={"text": "x"})
+        response = _saveapi_post(
+            type="video",
+            medias=[{"type": "video", "url": "https://cdn.example.com/clip.mp4"}],
+        )
 
         post = user.save_post_from_saveapi(response)
 
-        assert post.thumbnail_url == ""
+        assert post.thumbnail_url == "https://cdn.example.com/clip.mp4"
+
+    def test_missing_media_url_defaults_to_empty_string(self):
+        """Without a usable first media the thumbnail_url is empty."""
+        user = InstagramUserFactory()
+
+        for medias in ([], [{"type": "image"}], None, ["not-a-dict"]):
+            Post.objects.all().delete()
+            post = user.save_post_from_saveapi(_saveapi_post(medias=medias))
+
+            assert post.thumbnail_url == ""
 
     def test_missing_video_id_returns_none(self):
         """A response without video_id saves nothing."""

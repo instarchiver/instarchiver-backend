@@ -1,18 +1,24 @@
 import logging
 import uuid
+from io import BytesIO
 
 from django.core.files.base import ContentFile
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 from pgvector.django import VectorField
+from PIL import Image as PILImage
+from PIL import ImageOps
 from simple_history.models import HistoricalRecords
 
 from instagram.misc import get_post_media_upload_location
 from instagram.models.mixins import InstagramModerationMixin
 from instagram.models.mixins import ViewCountMixin
+from instagram.models.story import is_video_filename
 from instagram.models.user import User
 from instagram.utils import download_file_from_url
+from instagram.utils import extract_video_frame
+from instagram.utils import generate_blur_data_url_from_image
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +71,8 @@ class Post(InstagramModerationMixin, ViewCountMixin):
         is stored with a queryset update, so post_save does not fire and no
         history row is added. The update only applies while the row has no
         thumbnail. If another worker stored one first, the new file is
-        deleted.
+        deleted. When thumbnail_url points to a video, one frame is stored
+        as a JPEG instead of the video.
 
         The upload path reads user.username, so load user before calling.
 
@@ -77,6 +84,13 @@ class Post(InstagramModerationMixin, ViewCountMixin):
         content, extension = download_file_from_url(self.thumbnail_url)
         if not (content and extension):
             return None
+
+        # ftyp is the MP4/MOV header, for URLs without a video extension.
+        if is_video_filename(f"thumbnail.{extension}") or content[4:8] == b"ftyp":
+            content, extension = extract_video_frame(BytesIO(content)), "jpg"
+            if not content:
+                logger.warning("No frame cut from the video of post %s", self.pk)
+                return None
 
         self.thumbnail.save(
             f"{uuid.uuid4()}.{extension}",
@@ -93,6 +107,34 @@ class Post(InstagramModerationMixin, ViewCountMixin):
             return None
         logger.info("Downloaded thumbnail for post %s", self.pk)
         return self.thumbnail.name
+
+    def process_thumbnail(self):
+        """Fill blur_data_url, width and height from the stored thumbnail.
+
+        The file is read from storage once and the EXIF orientation is
+        applied, so the size matches what a browser shows. The values are
+        saved with a queryset update, so post_save does not fire and no
+        history row is added. Image and storage errors are raised.
+
+        Returns:
+            bool: True if the values were saved, False if there is no
+            thumbnail
+        """
+        if not self.thumbnail:
+            return False
+
+        with self.thumbnail.open("rb") as thumbnail_file:
+            img = ImageOps.exif_transpose(PILImage.open(thumbnail_file))
+            self.width, self.height = img.size
+            self.blur_data_url = generate_blur_data_url_from_image(img)
+
+        Post.objects.filter(pk=self.pk).update(
+            blur_data_url=self.blur_data_url,
+            width=self.width,
+            height=self.height,
+        )
+        logger.info("Processed thumbnail for post %s", self.pk)
+        return True
 
 
 class PostMedia(models.Model):

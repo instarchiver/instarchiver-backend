@@ -1,6 +1,8 @@
+import base64
 from io import BytesIO
 from unittest.mock import patch
 
+from django.core.files.base import ContentFile
 from django.core.files.storage import InMemoryStorage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
@@ -10,6 +12,7 @@ from instagram.models import Post
 from instagram.tests.factories import InstagramUserFactory
 from instagram.tests.factories import PostFactory
 from instagram.tests.factories import PostMediaFactory
+from instagram.tests.tasks.test_story_thumbnail import _make_video_bytes
 
 
 class TestPostModel(TestCase):
@@ -300,3 +303,78 @@ class TestPostDownloadThumbnail(TestCase):
         assert Post.objects.get(pk=post.pk).thumbnail.name == "posts/x/winner.jpg"
         _, files = self.storage.listdir(f"posts/{post.user.username}")
         assert files == []
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_video_is_stored_as_a_jpeg_frame(self, mock_download):
+        """A video is stored as one JPEG frame, found by extension or header."""
+        for extension in ("mp4", "bin"):
+            mock_download.return_value = (_make_video_bytes(), extension)
+            post = PostFactory(thumbnail_url="https://cdn.example.com/clip")
+
+            saved_name = post.download_thumbnail()
+
+            assert saved_name.endswith(".jpg")
+            with self.storage.open(saved_name) as stored:
+                assert Image.open(stored).format == "JPEG"
+
+    @patch("instagram.models.post.download_file_from_url")
+    def test_undecodable_video_saves_nothing(self, mock_download):
+        """No thumbnail is stored when no frame can be cut."""
+        mock_download.return_value = (b"not a video", "mp4")
+        post = PostFactory()
+
+        assert post.download_thumbnail() is None
+        assert not Post.objects.get(pk=post.pk).thumbnail
+
+
+class TestPostProcessThumbnail(TestCase):
+    """Tests for the Post.process_thumbnail method."""
+
+    def setUp(self):
+        patcher = patch.object(
+            Post._meta.get_field("thumbnail"),  # noqa: SLF001
+            "storage",
+            InMemoryStorage(),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _post_with_thumbnail(self, size=(200, 100), exif=None):
+        buffer = BytesIO()
+        Image.new("RGB", size, color="red").save(buffer, "JPEG", exif=exif or b"")
+        post = PostFactory(blur_data_url="")
+        post.thumbnail.save("thumb.jpg", ContentFile(buffer.getvalue()), save=False)
+        Post.objects.filter(pk=post.pk).update(thumbnail=post.thumbnail.name)
+        return post
+
+    def test_saves_blur_and_size(self):
+        """Blur, width and height are stored without a history row."""
+        post = self._post_with_thumbnail()
+        history_count = post.history.count()
+
+        assert post.process_thumbnail() is True
+
+        post.refresh_from_db()
+        assert (post.width, post.height) == (200, 100)
+        blur = Image.open(BytesIO(base64.b64decode(post.blur_data_url)))
+        assert blur.format == "JPEG"
+        assert post.history.count() == history_count
+
+    def test_size_follows_exif_orientation(self):
+        """A JPEG rotated by EXIF Orientation=6 is stored with the shown size."""
+        exif = Image.Exif()
+        exif[0x0112] = 6
+        post = self._post_with_thumbnail(exif=exif.tobytes())
+
+        post.process_thumbnail()
+
+        post.refresh_from_db()
+        assert (post.width, post.height) == (100, 200)
+
+    def test_without_thumbnail_returns_false(self):
+        """A post with no stored thumbnail is left alone."""
+        post = PostFactory(blur_data_url="")
+
+        assert post.process_thumbnail() is False
+        post.refresh_from_db()
+        assert post.blur_data_url == ""

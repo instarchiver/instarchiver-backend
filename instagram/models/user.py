@@ -134,6 +134,9 @@ class GetUserPostMixIn:
         CDN URLs that change on every fetch, so re-saving would only add
         history rows. That also keeps the first owner of a collab post.
 
+        thumbnail_url is the URL of the first media item, image or video.
+        Post.download_thumbnail cuts a frame when it is a video.
+
         Args:
             response (dict): SaveAPI /v1/download response from
                 fetch_post_details()
@@ -156,7 +159,12 @@ class GetUserPostMixIn:
             return None
 
         meta = response.get("meta") or {}
-        thumbnail_url = meta.get("thumbnail") or ""
+        # meta.thumbnail is sometimes the video URL, so use the first media.
+        medias = response.get("medias")
+        first_media = medias[0] if isinstance(medias, list) and medias else {}
+        thumbnail_url = (
+            first_media.get("url") if isinstance(first_media, dict) else None
+        ) or ""
         defaults = {
             "user": self,
             "variant": self._get_post_type(response),

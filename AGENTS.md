@@ -254,10 +254,11 @@ API routers in [config/api_router.py](config/api_router.py) use DRF's DefaultRou
 **Task Examples** ([instagram/tasks/](instagram/tasks/)):
 
 - `update_profile_picture_from_url()` - Downloads and updates profile pictures using hash comparison to detect actual content changes; configured with retries (max 3, 60s delay)
-- `story_generate_blur_data_url()` / `auto_generate_story_blur_data_urls()` - Blur placeholders for stories
+- `story_generate_blur_data_url()` / `auto_generate_story_blur_data_urls()` - Blur placeholders for stories, built from the stored `thumbnail` file. Stories that only have a `thumbnail_url` are skipped
 - `generate_story_embedding()` / `periodic_generate_story_embeddings()` - pgvector embeddings from thumbnail images
 - `moderate_story_content()` / `periodic_moderate_story_content()` - OpenAI moderation API flagging
-- `download_post_thumbnail_from_url()` / `periodic_download_post_thumbnails()` - Download a post's `thumbnail_url` into `thumbnail`. Instagram CDN URLs expire, so the periodic task only queues posts archived in the last 7 days. Nothing else queues the download, so new posts wait for the next run. The task doesn't retry a failed download; the next periodic run queues it again, so schedule that task hourly
+- `download_post_thumbnail_from_url()` / `periodic_download_post_thumbnails()` - Download a post's `thumbnail_url` into `thumbnail`. `thumbnail_url` is the first media item's URL, not `meta.thumbnail`, which is sometimes the video. When it is a video, the whole file is downloaded and one frame is stored as a JPEG. Instagram CDN URLs expire, so the periodic task only queues posts archived in the last 7 days. Nothing else queues the download, so new posts wait for the next run. The task doesn't retry a failed download; the next periodic run queues it again, so schedule that task hourly
+- `process_post_thumbnail()` / `periodic_process_post_thumbnails()` - Fill a post's `blur_data_url`, `width` and `height` from the stored `thumbnail` file once the download task has saved it. The size follows the EXIF orientation, and the blur is always a JPEG
 - Each file in `instagram/tasks/` lists regular tasks first, then periodic (Celery Beat) tasks below a separator comment. Add new tasks to the matching section
 
 ### AI Features
