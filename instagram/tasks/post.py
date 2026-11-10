@@ -20,6 +20,15 @@ NEEDS_THUMBNAIL_PROCESSING = Q(thumbnail__gt="") & (
     Q(blur_data_url="") | Q(width__isnull=True) | Q(height__isnull=True)
 )
 
+# Posts that can get an embedding. Old thumbnails stored as video files are
+# skipped, because OpenRouter rejects them on every run.
+NEEDS_EMBEDDING = Q(embedding__isnull=True, thumbnail__gt="") & ~Q(
+    thumbnail__iregex=r"\.(mp4|mov|webm)$",
+)
+
+# Each post costs one paid OpenRouter call, so a run queues at most this many.
+EMBEDDING_BATCH_SIZE = 500
+
 
 # ---------------------------------------------------------------------------
 # Tasks
@@ -92,6 +101,37 @@ def process_post_thumbnail(post_id):
     return {"success": True, "post_id": post_id, "processed": True}
 
 
+@shared_task
+def generate_post_embedding(post_id):
+    """Generate an embedding for a post's thumbnail.
+
+    A post that is missing, has no usable thumbnail or already has an
+    embedding returns without calling OpenRouter. There is no retry, because
+    OpenRouter calls cost money. A failed post keeps a null embedding, so
+    periodic_generate_post_embeddings queues it again on a later run.
+
+    Args:
+        post_id (str): primary key of the post
+
+    Returns:
+        dict: success (bool), post_id and generated (bool), plus dimensions
+        when an embedding was saved
+    """
+    post = (
+        Post.objects.only("id", "thumbnail").filter(NEEDS_EMBEDDING, id=post_id).first()
+    )
+    if post is None:
+        return {"success": True, "post_id": post_id, "generated": False}
+
+    embedding = post.generate_embedding()
+    return {
+        "success": True,
+        "post_id": post_id,
+        "generated": True,
+        "dimensions": len(embedding),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Periodic tasks (scheduled by Celery Beat)
 # ---------------------------------------------------------------------------
@@ -122,3 +162,19 @@ def periodic_process_post_thumbnails():
     """
     posts = Post.objects.filter(NEEDS_THUMBNAIL_PROCESSING)
     return _queue_each(process_post_thumbnail, posts)
+
+
+@shared_task
+def periodic_generate_post_embeddings():
+    """Queue embeddings for the newest posts with a thumbnail but no embedding.
+
+    At most EMBEDDING_BATCH_SIZE posts are queued per run, so a large backlog
+    is worked through over several runs.
+
+    Returns:
+        dict: success (bool), total, queued and errors (int)
+    """
+    posts = Post.objects.filter(NEEDS_EMBEDDING).order_by("-created_at")[
+        :EMBEDDING_BATCH_SIZE
+    ]
+    return _queue_each(generate_post_embedding, posts)

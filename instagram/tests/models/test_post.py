@@ -2,6 +2,8 @@ import base64
 from io import BytesIO
 from unittest.mock import patch
 
+import pytest
+import requests
 from django.core.files.base import ContentFile
 from django.core.files.storage import InMemoryStorage
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -378,3 +380,54 @@ class TestPostProcessThumbnail(TestCase):
         assert post.process_thumbnail() is False
         post.refresh_from_db()
         assert post.blur_data_url == ""
+
+
+class TestPostGenerateEmbedding(TestCase):
+    """Tests for the Post.generate_embedding method."""
+
+    def _post_with_thumbnail(self):
+        post = PostFactory()
+        Post.objects.filter(pk=post.pk).update(thumbnail="posts/x/a.jpg")
+        post.refresh_from_db()
+        return post
+
+    def test_raises_without_thumbnail(self):
+        """A post without a stored thumbnail cannot be embedded."""
+        with pytest.raises(ValueError, match="Thumbnail file does not exist"):
+            PostFactory().generate_embedding()
+
+    @patch("instagram.models.post.generate_image_embedding")
+    def test_saves_embedding_and_tokens(self, mock_embed):
+        """The vector and token usage are stored without a history row."""
+        mock_embed.return_value = ([0.1] * 1536, 42)
+        post = self._post_with_thumbnail()
+        history_count = post.history.count()
+
+        assert len(post.generate_embedding()) == 1536  # noqa: PLR2004
+
+        post.refresh_from_db()
+        assert post.embedding_token_usage == 42  # noqa: PLR2004
+        assert len(post.embedding) == 1536  # noqa: PLR2004
+        assert post.history.count() == history_count
+        mock_embed.assert_called_once_with(post.thumbnail.url)
+
+    @patch("instagram.models.post.generate_image_embedding")
+    def test_wrong_dimensions_raise_before_saving(self, mock_embed):
+        """A vector that does not fit the column is rejected with a clear error."""
+        mock_embed.return_value = ([0.1] * 2048, 42)
+        post = self._post_with_thumbnail()
+
+        with pytest.raises(ValueError, match="2048 dimensions"):
+            post.generate_embedding()
+
+        post.refresh_from_db()
+        assert post.embedding is None
+
+    @patch("instagram.models.post.generate_image_embedding")
+    def test_api_errors_propagate(self, mock_embed):
+        """OpenRouter errors reach the caller and nothing is saved."""
+        mock_embed.side_effect = requests.RequestException("boom")
+        post = self._post_with_thumbnail()
+
+        with pytest.raises(requests.RequestException):
+            post.generate_embedding()

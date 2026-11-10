@@ -6,8 +6,10 @@ from django.utils import timezone
 
 from instagram.models import Post
 from instagram.tasks import download_post_thumbnail_from_url
+from instagram.tasks import generate_post_embedding
 from instagram.tasks import increment_post_view_count
 from instagram.tasks import periodic_download_post_thumbnails
+from instagram.tasks import periodic_generate_post_embeddings
 from instagram.tasks import periodic_process_post_thumbnails
 from instagram.tasks import process_post_thumbnail
 from instagram.tests.factories import PostFactory
@@ -115,3 +117,62 @@ class TestPeriodicProcessPostThumbnails(TestCase):
         queued = {call.args[0] for call in mock_delay.call_args_list}
         assert queued == {no_blur.pk, no_size.pk}
         assert result["queued"] == 2  # noqa: PLR2004
+
+
+def _post_with_thumbnail(thumbnail="posts/x/a.jpg", **kwargs):
+    """Return a post with a stored thumbnail name and no embedding."""
+    post = PostFactory(**kwargs)
+    Post.objects.filter(pk=post.pk).update(thumbnail=thumbnail)
+    return post
+
+
+class TestGeneratePostEmbedding(TestCase):
+    @patch("instagram.models.Post.generate_embedding", return_value=[0.1] * 1536)
+    def test_generates_for_post_that_needs_it(self, mock_generate):
+        post = _post_with_thumbnail()
+
+        result = generate_post_embedding(post.id)
+
+        assert result["generated"] is True
+        assert result["dimensions"] == 1536  # noqa: PLR2004
+        mock_generate.assert_called_once()
+
+    @patch("instagram.models.Post.generate_embedding")
+    def test_skips_posts_that_cannot_or_need_not_be_embedded(self, mock_generate):
+        done = _post_with_thumbnail()
+        Post.objects.filter(pk=done.pk).update(embedding=[0.1] * 1536)
+        no_thumbnail = PostFactory()
+        video_file = _post_with_thumbnail(thumbnail="posts/x/old.MP4")
+
+        for post_id in ("does-not-exist", done.id, no_thumbnail.id, video_file.id):
+            assert generate_post_embedding(post_id)["generated"] is False
+        mock_generate.assert_not_called()
+
+
+class TestPeriodicGeneratePostEmbeddings(TestCase):
+    @patch("instagram.tasks.post.generate_post_embedding.delay")
+    def test_queues_only_posts_needing_an_embedding(self, mock_delay):
+        needs = _post_with_thumbnail()
+        done = _post_with_thumbnail()
+        Post.objects.filter(pk=done.pk).update(embedding=[0.1] * 1536)
+        PostFactory()  # no thumbnail
+        _post_with_thumbnail(thumbnail="posts/x/old.mp4")
+
+        result = periodic_generate_post_embeddings()
+
+        mock_delay.assert_called_once_with(needs.pk)
+        assert result["queued"] == 1
+
+    @patch("instagram.tasks.post.EMBEDDING_BATCH_SIZE", 2)
+    @patch("instagram.tasks.post.generate_post_embedding.delay")
+    def test_queues_newest_posts_up_to_the_batch_size(self, mock_delay):
+        posts = [_post_with_thumbnail() for _ in range(3)]
+        for days, post in enumerate(posts):
+            Post.objects.filter(pk=post.pk).update(
+                created_at=timezone.now() - timedelta(days=days),
+            )
+
+        periodic_generate_post_embeddings()
+
+        queued = {call.args[0] for call in mock_delay.call_args_list}
+        assert queued == {posts[0].pk, posts[1].pk}

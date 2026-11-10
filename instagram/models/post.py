@@ -11,6 +11,7 @@ from PIL import Image as PILImage
 from PIL import ImageOps
 from simple_history.models import HistoricalRecords
 
+from core.utils.openrouter import generate_image_embedding
 from instagram.misc import get_post_media_upload_location
 from instagram.models.mixins import InstagramModerationMixin
 from instagram.models.mixins import ViewCountMixin
@@ -135,6 +136,47 @@ class Post(InstagramModerationMixin, ViewCountMixin):
         )
         logger.info("Processed thumbnail for post %s", self.pk)
         return True
+
+    def generate_embedding(self):
+        """Generate and save an embedding of the thumbnail through OpenRouter.
+
+        The values are saved with a queryset update, so post_save does not
+        fire and no history row is added.
+
+        Returns:
+            list[float]: the embedding vector
+
+        Raises:
+            ValueError: if the post has no thumbnail, or the vector does not
+                fit the 1536-dimension column
+            ImproperlyConfigured: if OpenRouter is not configured
+            requests.RequestException: if the OpenRouter call fails
+        """
+        if not self.thumbnail:
+            msg = f"Thumbnail file does not exist for post {self.pk}"
+            raise ValueError(msg)
+
+        embedding, token_usage = generate_image_embedding(self.thumbnail.url)
+        dimensions = self._meta.get_field("embedding").dimensions
+        if len(embedding) != dimensions:
+            msg = (
+                f"Embedding for post {self.pk} has {len(embedding)} dimensions, "
+                f"expected {dimensions}"
+            )
+            raise ValueError(msg)
+
+        self.embedding = embedding
+        self.embedding_token_usage = token_usage
+        Post.objects.filter(pk=self.pk).update(
+            embedding=embedding,
+            embedding_token_usage=token_usage,
+        )
+        logger.info(
+            "Generated embedding for post %s (tokens: %d)",
+            self.pk,
+            token_usage,
+        )
+        return embedding
 
 
 class PostMedia(models.Model):
