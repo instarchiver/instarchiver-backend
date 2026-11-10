@@ -195,13 +195,10 @@ class MyViewSet(viewsets.ModelViewSet):
 **Always use the Core API client for external requests:**
 
 ```python
-from core.utils.instagram_api import (
-    fetch_user_info_by_username_v2,
-    fetch_user_info_by_user_id,
-)
+from core.utils.saveapi import fetch_user_profile
 
 # ✅ CORRECT - Uses centralized client with automatic logging
-user_data = fetch_user_info_by_username_v2(username)
+user_data = fetch_user_profile(username)
 
 # ❌ WRONG - Don't make direct requests
 import requests

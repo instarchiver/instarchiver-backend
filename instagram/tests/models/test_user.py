@@ -204,7 +204,7 @@ class TestUserFetchPostDetails(TestCase):
             {"success": True, "id": "b"},
         ]
 
-        assert user.fetch_post_details() == [
+        assert list(user.fetch_post_details()) == [
             {"success": True, "id": "a"},
             {"success": True, "id": "b"},
         ]
@@ -214,7 +214,7 @@ class TestUserFetchPostDetails(TestCase):
         """A post with no url never reaches SaveAPI."""
         user = InstagramUserFactory(raw_api_data={"recent_posts": [{"id": "1"}]})
 
-        assert user.fetch_post_details() == []
+        assert list(user.fetch_post_details()) == []
         mock_fetch.assert_not_called()
 
     def test_failed_posts_are_skipped(self, mock_fetch):
@@ -230,7 +230,7 @@ class TestUserFetchPostDetails(TestCase):
             {"success": True, "id": "ok"},
         ]
 
-        assert user.fetch_post_details() == [{"success": True, "id": "ok"}]
+        assert list(user.fetch_post_details()) == [{"success": True, "id": "ok"}]
         assert mock_fetch.call_count == 5  # noqa: PLR2004
 
     def test_http_rate_limit_is_raised(self, mock_fetch):
@@ -239,7 +239,7 @@ class TestUserFetchPostDetails(TestCase):
         mock_fetch.side_effect = SaveAPIError("HTTP_429", "slow down", status_code=429)
 
         with pytest.raises(SaveAPIError) as exc_info:
-            user.fetch_post_details()
+            list(user.fetch_post_details())
 
         assert exc_info.value.is_rate_limited
         mock_fetch.assert_called_once()
@@ -250,7 +250,7 @@ class TestUserFetchPostDetails(TestCase):
         mock_fetch.return_value = {"success": False, "error": {"code": "RATE_LIMITED"}}
 
         with pytest.raises(SaveAPIError, match="RATE_LIMITED"):
-            user.fetch_post_details()
+            list(user.fetch_post_details())
 
     def test_missing_configuration_is_raised(self, mock_fetch):
         """Missing SaveAPI settings are not swallowed as a per-post failure."""
@@ -258,7 +258,7 @@ class TestUserFetchPostDetails(TestCase):
         mock_fetch.side_effect = ImproperlyConfigured("no key")
 
         with pytest.raises(ImproperlyConfigured):
-            user.fetch_post_details()
+            list(user.fetch_post_details())
 
 
 class TestUserUpdateProfileFromApi(TestCase):

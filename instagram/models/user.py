@@ -55,13 +55,16 @@ class GetUserPostMixIn:
         one bad post doesn't lose the rest. Rate limits are raised so the
         caller can back off and try again later.
 
-        Returns:
-            list[dict]: SaveAPI responses for the posts that were fetched
+        Responses are yielded one at a time, so a caller can save each post
+        before the next request. A rate limit then keeps the posts already
+        paid for.
+
+        Yields:
+            dict: SaveAPI response for each post that was fetched
 
         Raises:
             SaveAPIError: if SaveAPI rate limits the request
         """
-        details = []
         for post in self.get_post_urls():
             url = post["url"]
             if not url:
@@ -91,8 +94,7 @@ class GetUserPostMixIn:
             except requests.RequestException as e:
                 logger.warning("Skipping post %s of user %s: %s", url, self.username, e)
                 continue
-            details.append(response)
-        return details
+            yield response
 
 
 class GetUserStoryMixIn:
