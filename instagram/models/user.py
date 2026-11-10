@@ -1,6 +1,8 @@
 import hashlib
 import logging
 import uuid
+from datetime import UTC
+from datetime import datetime
 from urllib.parse import urlparse
 
 import requests
@@ -95,6 +97,61 @@ class GetUserPostMixIn:
                 logger.warning("Skipping post %s of user %s: %s", url, self.username, e)
                 continue
             yield response
+
+    def save_post_from_saveapi(self, response):
+        """Save one SaveAPI post detail response as a Post owned by this user.
+
+        The Post id is the response's video_id, which is the Instagram media
+        pk. A post that already exists is left as it is: raw_data holds signed
+        CDN URLs that change on every fetch, so re-saving would only add
+        history rows. That also keeps the first owner of a collab post.
+
+        Args:
+            response (dict): SaveAPI /v1/download response from
+                fetch_post_details()
+
+        Returns:
+            Post | None: the new or existing post, or None if the response
+            has no video_id
+        """
+        from .post import Post  # noqa: PLC0415
+
+        post_id = response.get("video_id")
+        if not post_id:
+            logger.warning(
+                "Skipping post of user %s: response has no video_id",
+                self.username,
+            )
+            return None
+
+        meta = response.get("meta") or {}
+        first_image_url = next(
+            (
+                media.get("url")
+                for media in response.get("medias") or []
+                if isinstance(media, dict) and media.get("type") == "image"
+            ),
+            None,
+        )
+        defaults = {
+            "user": self,
+            "variant": {
+                "album": Post.POST_VARIANT_CAROUSEL,
+                "video": Post.POST_VARIANT_VIDEO,
+            }.get(response.get("type"), Post.POST_VARIANT_NORMAL),
+            "caption": meta.get("text") or "",
+            "thumbnail_url": meta.get("thumbnail") or first_image_url or "",
+            # credits is billing data, not post data.
+            "raw_data": {
+                key: value for key, value in response.items() if key != "credits"
+            },
+        }
+        published_at = meta.get("published_at")
+        if isinstance(published_at, (int, float)):
+            defaults["post_created_at"] = datetime.fromtimestamp(published_at, tz=UTC)
+
+        post, _ = Post.objects.get_or_create(id=str(post_id), defaults=defaults)
+        return post
 
 
 class GetUserStoryMixIn:

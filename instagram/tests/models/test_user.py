@@ -1,3 +1,5 @@
+from datetime import UTC
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
@@ -6,10 +8,12 @@ from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase
 
 from core.utils.saveapi import SaveAPIError
+from instagram.models import Post
 from instagram.models import Story
 from instagram.models import User
 from instagram.models.story import UserUpdateStoryLog
 from instagram.tests.factories import InstagramUserFactory
+from instagram.tests.factories import PostFactory
 
 
 class TestUserModelStr(TestCase):
@@ -259,6 +263,80 @@ class TestUserFetchPostDetails(TestCase):
 
         with pytest.raises(ImproperlyConfigured):
             list(user.fetch_post_details())
+
+
+def _saveapi_post(**overrides):
+    """Return a SaveAPI post detail response shaped like a single photo."""
+    response = {
+        "success": True,
+        "type": "image",
+        "meta": {
+            "text": "Just a pause.",
+            "thumbnail": "https://cdn.example.com/thumb.jpg",
+            "published_at": 1794276049,
+        },
+        "medias": [{"type": "image", "url": "https://cdn.example.com/full.jpg"}],
+        "video_id": "4027001720088057574",
+        "credits": {"spent": 1.5, "remaining": 100},
+    }
+    response.update(overrides)
+    return response
+
+
+class TestUserSavePostFromSaveapi(TestCase):
+    """Tests for the User.save_post_from_saveapi method."""
+
+    def test_creates_post_with_raw_data(self):
+        """A new post gets its fields from the response, minus credits."""
+        user = InstagramUserFactory()
+
+        post = user.save_post_from_saveapi(_saveapi_post())
+
+        post.refresh_from_db()
+        assert post.id == "4027001720088057574"
+        assert post.user == user
+        assert post.variant == Post.POST_VARIANT_NORMAL
+        assert post.caption == "Just a pause."
+        assert post.thumbnail_url == "https://cdn.example.com/thumb.jpg"
+        assert post.post_created_at == datetime.fromtimestamp(1794276049, tz=UTC)
+        assert "credits" not in post.raw_data
+        assert post.raw_data["video_id"] == "4027001720088057574"
+
+    def test_album_is_carousel(self):
+        """An album response is saved as a carousel post."""
+        user = InstagramUserFactory()
+
+        post = user.save_post_from_saveapi(_saveapi_post(type="album"))
+
+        assert post.variant == Post.POST_VARIANT_CAROUSEL
+
+    def test_existing_post_is_left_alone(self):
+        """A post that is already stored keeps its owner and fields."""
+        existing = PostFactory(id="4027001720088057574", caption="old")
+        user = InstagramUserFactory()
+
+        post = user.save_post_from_saveapi(_saveapi_post())
+
+        post.refresh_from_db()
+        assert post.user == existing.user
+        assert post.caption == "old"
+        assert Post.objects.count() == 1
+
+    def test_thumbnail_falls_back_to_first_image(self):
+        """Without meta.thumbnail the first image media URL is used."""
+        user = InstagramUserFactory()
+        response = _saveapi_post(meta={"text": "x"})
+
+        post = user.save_post_from_saveapi(response)
+
+        assert post.thumbnail_url == "https://cdn.example.com/full.jpg"
+
+    def test_missing_video_id_returns_none(self):
+        """A response without video_id saves nothing."""
+        user = InstagramUserFactory()
+
+        assert user.save_post_from_saveapi(_saveapi_post(video_id=None)) is None
+        assert not Post.objects.exists()
 
 
 class TestUserUpdateProfileFromApi(TestCase):
