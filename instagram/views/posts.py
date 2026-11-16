@@ -4,8 +4,8 @@ from django.db.models import Exists
 from django.db.models import OuterRef
 from django.db.models import Prefetch
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import OpenApiResponse
 from drf_spectacular.utils import extend_schema
+from pgvector.django import CosineDistance
 from pgvector.django import L2Distance
 from rest_framework import filters
 from rest_framework.generics import ListAPIView
@@ -16,6 +16,7 @@ from rest_framework.response import Response
 from core.utils.openai import generate_text_embedding
 from core.utils.view_tracking import get_client_ip
 from core.utils.view_tracking import should_count_view
+from instagram.constants import SIMILAR_MAX_COSINE_DISTANCE
 from instagram.models import Post
 from instagram.models import PostMedia
 from instagram.models import Story
@@ -171,7 +172,7 @@ class PostAISearchView(ListAPIView):
 
 
 class PostSimilarView(ListAPIView):
-    """Get similar posts based on embedding similarity using L2Distance."""
+    """Posts ranked by cosine distance to a given post within the relevance threshold."""  # noqa: E501
 
     serializer_class = PostListSerializer
     pagination_class = PostSimilarPageNumberPagination
@@ -181,28 +182,27 @@ class PostSimilarView(ListAPIView):
         summary="Get similar posts",
         description=(
             "Retrieve posts similar to the specified post based on embedding "
-            "similarity using L2Distance. Only returns posts that have embeddings."
+            "cosine distance. Only returns posts that have embeddings within "
+            "the similarity threshold."
         ),
         responses={
             200: PostListSerializer(many=True),
-            404: OpenApiResponse(description="Post not found"),
         },
     )
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
-        # Get the post ID from URL parameter
-        post_id = self.kwargs.get("id")
-
-        # Get the source post and its embedding
-        try:
-            source_post = Post.objects.get(id=post_id)
-        except Post.DoesNotExist:
+        if getattr(self, "swagger_fake_view", False):
             return Post.objects.none()
 
-        # If source post has no embedding, return empty queryset
-        if source_post.embedding is None:
+        post_id = self.kwargs.get("id")
+
+        # None when the post is missing or has no embedding yet.
+        embedding = (
+            Post.objects.filter(id=post_id).values_list("embedding", flat=True).first()
+        )
+        if embedding is None:
             return Post.objects.none()
 
         # Annotate users with has_stories and has_history
@@ -216,18 +216,16 @@ class PostSimilarView(ListAPIView):
         # Rows are inserted in carousel order, so id keeps that order
         ordered_postmedia = PostMedia.objects.order_by("id")
 
-        # Find similar posts using L2Distance
         return (
             Post.objects.filter(embedding__isnull=False)
             .defer("raw_data", "embedding")
-            .exclude(id=post_id)  # Exclude the source post itself
+            .exclude(id=post_id)
+            .alias(distance=CosineDistance("embedding", embedding))
+            .filter(distance__lte=SIMILAR_MAX_COSINE_DISTANCE)
             .prefetch_related(
                 Prefetch("user", queryset=annotated_users),
                 Prefetch("postmedia_set", queryset=ordered_postmedia),
             )
-            .annotate(
-                media_count=Count("postmedia"),
-                similarity_score=1 - L2Distance("embedding", source_post.embedding),
-            )
-            .order_by("-similarity_score")
+            .annotate(media_count=Count("postmedia"))
+            .order_by("distance", "id")
         )

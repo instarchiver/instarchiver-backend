@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 from unittest.mock import patch
 
 from django.core.cache import cache
@@ -1153,6 +1154,100 @@ class StorySimilarViewTest(TestCase):
         assert "user1" in usernames
         assert "user2" in usernames
 
+    @staticmethod
+    def _unit_vector(cosine_similarity: float) -> list[float]:
+        """Build a 1536-dim unit vector at the given cosine similarity to [1, 0, ...]."""  # noqa: E501
+        orthogonal = math.sqrt(1 - cosine_similarity**2)
+        return [cosine_similarity, orthogonal, *([0.0] * 1534)]
+
+    def test_similar_stories_pagination_stops_at_relevance_threshold(self):
+        """Irrelevant stories beyond the threshold are excluded and next stops."""
+        user = InstagramUserFactory()
+        source_story = StoryFactory(user=user, embedding=self._unit_vector(1.0))
+
+        relevant_count = 25
+        for _ in range(relevant_count):
+            StoryFactory(user=user, embedding=self._unit_vector(0.9))
+        for _ in range(15):
+            StoryFactory(user=user, embedding=self._unit_vector(0.0))
+
+        url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": source_story.story_id},
+        )
+        page1 = self.client.get(url)
+        assert page1.status_code == status.HTTP_200_OK
+        assert page1.data["count"] == relevant_count
+        assert len(page1.data["results"]) == 20  # noqa: PLR2004
+        assert page1.data["next"] is not None
+
+        page2 = self.client.get(url, {"page": 2})
+        assert page2.status_code == status.HTTP_200_OK
+        assert page2.data["count"] == relevant_count
+        assert len(page2.data["results"]) == 5  # noqa: PLR2004
+        assert page2.data["next"] is None
+
+    def test_similar_stories_all_irrelevant_returns_empty(self):
+        """When no story meets the threshold, return empty results and no next link."""
+        user = InstagramUserFactory()
+        source_story = StoryFactory(user=user, embedding=self._unit_vector(1.0))
+        for _ in range(5):
+            StoryFactory(user=user, embedding=self._unit_vector(0.0))
+
+        url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": source_story.story_id},
+        )
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 0
+        assert response.data["results"] == []
+        assert response.data["next"] is None
+
+    def test_similar_stories_threshold_boundary(self):
+        """Stories just inside (~0.44) pass and just outside (~0.46) are filtered out."""  # noqa: E501
+        user = InstagramUserFactory()
+        source_story = StoryFactory(user=user, embedding=self._unit_vector(1.0))
+        inside = StoryFactory(user=user, embedding=self._unit_vector(0.56))
+        StoryFactory(user=user, embedding=self._unit_vector(0.54))
+
+        url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": source_story.story_id},
+        )
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 1
+        assert [s["story_id"] for s in response.data["results"]] == [inside.story_id]
+
+    def test_similar_stories_zero_vector_candidate_and_source(self):
+        """Zero vectors produce no matches and never trigger SQL errors."""
+        user = InstagramUserFactory()
+        zero_vec = [0.0] * 1536
+        valid_story = StoryFactory(user=user, embedding=self._unit_vector(1.0))
+        StoryFactory(user=user, embedding=zero_vec)
+
+        valid_url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": valid_story.story_id},
+        )
+        res_valid = self.client.get(valid_url)
+        assert res_valid.status_code == status.HTTP_200_OK
+        assert res_valid.data["count"] == 0
+        assert res_valid.data["results"] == []
+
+        zero_story = StoryFactory(user=user, embedding=zero_vec)
+        zero_url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": zero_story.story_id},
+        )
+        res_zero = self.client.get(zero_url)
+        assert res_zero.status_code == status.HTTP_200_OK
+        assert res_zero.data["count"] == 0
+        assert res_zero.data["results"] == []
+
 
 def _select_lists(queries, table):
     """Return the SELECT list (text before the first FROM) of queries on a table."""
@@ -1216,9 +1311,9 @@ class StoryQueryColumnsTest(TestCase):
             kwargs={"story_id": self.story.story_id},
         )
         queries = self._get(url)
-        # The page query is the one ordered by L2 distance. The lookup of the
-        # source story's embedding selects that column on purpose.
-        page_queries = [q for q in queries if "<->" in q["sql"]]
+        # The page and count queries filter or order by cosine distance (<=>).
+        # The lookup of the source story's embedding selects that column on purpose.
+        page_queries = [q for q in queries if "<=>" in q["sql"]]
         self._assert_columns(
             _select_lists(page_queries, "instagram_story"),
             _select_lists(queries, "instagram_user"),

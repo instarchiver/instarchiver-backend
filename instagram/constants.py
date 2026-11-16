@@ -39,3 +39,6 @@ LIST_USER_DEFERRED = ("original_profile_picture_url", "raw_api_data", "view_coun
 
 # User columns left out by InstagramUserDetailSerializer
 DETAIL_USER_DEFERRED = ("raw_api_data", "view_count")
+
+# Maximum cosine distance for similar posts and stories (similarity >= 0.55)
+SIMILAR_MAX_COSINE_DISTANCE = 0.45

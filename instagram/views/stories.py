@@ -6,9 +6,8 @@ from django.db.models import Exists
 from django.db.models import OuterRef
 from django.db.models import Prefetch
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import OpenApiResponse
 from drf_spectacular.utils import extend_schema
-from pgvector.django import L2Distance
+from pgvector.django import CosineDistance
 from rest_framework import filters
 from rest_framework.generics import ListAPIView
 from rest_framework.generics import RetrieveAPIView
@@ -19,6 +18,7 @@ from core.utils.view_tracking import get_client_ip
 from core.utils.view_tracking import should_count_view
 from instagram.constants import DETAIL_USER_DEFERRED
 from instagram.constants import LIST_USER_DEFERRED
+from instagram.constants import SIMILAR_MAX_COSINE_DISTANCE
 from instagram.constants import STORY_FIELDS
 from instagram.models import Story
 from instagram.models import User as InstagramUser
@@ -96,7 +96,7 @@ class StoryDetailView(RetrieveAPIView):
 
 
 class StorySimilarView(ListAPIView):
-    """Stories ranked by embedding similarity (L2Distance) to a given story."""
+    """Stories ranked by cosine distance to a given story within the relevance threshold."""  # noqa: E501
 
     serializer_class = StoryListSerializer
     pagination_class = StorySimilarPageNumberPagination
@@ -106,17 +106,20 @@ class StorySimilarView(ListAPIView):
         summary="Get similar stories",
         description=(
             "Retrieve stories similar to the specified story based on embedding "
-            "similarity using L2Distance. Only returns stories that have embeddings."
+            "cosine distance. Only returns stories that have embeddings within "
+            "the similarity threshold."
         ),
         responses={
             200: StoryListSerializer(many=True),
-            404: OpenApiResponse(description="Story not found"),
         },
     )
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Story.objects.none()
+
         story_id = self.kwargs.get("story_id")
         # None when the story is missing or has no embedding yet.
         embedding = (
@@ -131,7 +134,9 @@ class StorySimilarView(ListAPIView):
         return (
             Story.objects.filter(embedding__isnull=False)
             .exclude(story_id=story_id)
+            .alias(distance=CosineDistance("embedding", embedding))
+            .filter(distance__lte=SIMILAR_MAX_COSINE_DISTANCE)
             .only(*STORY_FIELDS)
             .prefetch_related(Prefetch("user", queryset=users))
-            .order_by(L2Distance("embedding", embedding), "story_id")
+            .order_by("distance", "story_id")
         )

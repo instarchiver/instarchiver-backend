@@ -1,3 +1,4 @@
+import math
 from unittest.mock import patch
 
 from django.core.cache import cache
@@ -1331,3 +1332,97 @@ class PostSimilarViewTest(TestCase):
         usernames = {post["user"]["username"] for post in results}
         assert "user1" in usernames
         assert "user2" in usernames
+
+    @staticmethod
+    def _unit_vector(cosine_similarity: float) -> list[float]:
+        """Build a 1536-dim unit vector at the given cosine similarity to [1, 0, ...]."""  # noqa: E501
+        orthogonal = math.sqrt(1 - cosine_similarity**2)
+        return [cosine_similarity, orthogonal, *([0.0] * 1534)]
+
+    def test_similar_posts_pagination_stops_at_relevance_threshold(self):
+        """Irrelevant posts beyond the threshold are excluded and next stops."""
+        user = InstagramUserFactory(username="testuser")
+        source_post = PostFactory(user=user, embedding=self._unit_vector(1.0))
+
+        relevant_count = 25
+        for _ in range(relevant_count):
+            PostFactory(user=user, embedding=self._unit_vector(0.9))
+        for _ in range(15):
+            PostFactory(user=user, embedding=self._unit_vector(0.0))
+
+        url = reverse("instagram:post_similar", kwargs={"id": source_post.id})
+        page1 = self.client.get(url)
+        assert page1.status_code == status.HTTP_200_OK
+        assert page1.data["count"] == relevant_count
+        assert len(page1.data["results"]) == 20  # noqa: PLR2004
+        assert page1.data["next"] is not None
+
+        page2 = self.client.get(url, {"page": 2})
+        assert page2.status_code == status.HTTP_200_OK
+        assert page2.data["count"] == relevant_count
+        assert len(page2.data["results"]) == 5  # noqa: PLR2004
+        assert page2.data["next"] is None
+
+    def test_similar_posts_all_irrelevant_returns_empty(self):
+        """When no post meets the threshold, return empty results and no next link."""
+        user = InstagramUserFactory(username="testuser")
+        source_post = PostFactory(user=user, embedding=self._unit_vector(1.0))
+        PostFactory.create_batch(5, user=user, embedding=self._unit_vector(0.0))
+
+        url = reverse("instagram:post_similar", kwargs={"id": source_post.id})
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 0
+        assert response.data["results"] == []
+        assert response.data["next"] is None
+
+    def test_similar_posts_threshold_boundary(self):
+        """Posts just inside (~0.44) pass and just outside (~0.46) are filtered out."""
+        user = InstagramUserFactory(username="testuser")
+        source_post = PostFactory(user=user, embedding=self._unit_vector(1.0))
+        inside = PostFactory(user=user, embedding=self._unit_vector(0.56))
+        PostFactory(user=user, embedding=self._unit_vector(0.54))
+
+        url = reverse("instagram:post_similar", kwargs={"id": source_post.id})
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 1
+        assert [p["id"] for p in response.data["results"]] == [inside.id]
+
+    def test_similar_posts_zero_vector_candidate_and_source(self):
+        """Zero vectors produce no matches and never trigger SQL errors."""
+        user = InstagramUserFactory(username="testuser")
+        zero_vec = [0.0] * 1536
+        valid_post = PostFactory(user=user, embedding=self._unit_vector(1.0))
+        PostFactory(user=user, embedding=zero_vec)
+
+        valid_url = reverse("instagram:post_similar", kwargs={"id": valid_post.id})
+        res_valid = self.client.get(valid_url)
+        assert res_valid.status_code == status.HTTP_200_OK
+        assert res_valid.data["count"] == 0
+        assert res_valid.data["results"] == []
+
+        zero_post = PostFactory(user=user, embedding=zero_vec)
+        zero_url = reverse("instagram:post_similar", kwargs={"id": zero_post.id})
+        res_zero = self.client.get(zero_url)
+        assert res_zero.status_code == status.HTTP_200_OK
+        assert res_zero.data["count"] == 0
+        assert res_zero.data["results"] == []
+
+    def test_similar_posts_tie_breaker_ordering_is_deterministic(self):
+        """Identical distances paginate deterministically by id without duplicates."""
+        user = InstagramUserFactory(username="testuser")
+        vec = self._unit_vector(1.0)
+        source_post = PostFactory(user=user, embedding=vec)
+        created_ids = [PostFactory(user=user, embedding=vec).id for _ in range(5)]
+
+        url = reverse("instagram:post_similar", kwargs={"id": source_post.id})
+        collected_ids = []
+        for page in (1, 2, 3):
+            res = self.client.get(url, {"page_size": 2, "page": page})
+            assert res.status_code == status.HTTP_200_OK
+            collected_ids.extend(p["id"] for p in res.data["results"])
+
+        assert collected_ids == sorted(created_ids)
