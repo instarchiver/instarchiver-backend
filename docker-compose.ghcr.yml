@@ -62,7 +62,7 @@ services:
   celeryworker:
     <<: *django
     image: ghcr.io/instarchiver/instarchiver-backend/django:latest
-    mem_limit: 500m
+    mem_limit: 1024m
     command: /start-celeryworker
 
   celerybeat:
