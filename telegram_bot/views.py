@@ -36,7 +36,7 @@ class TelegramWebhookView(APIView):
             return Response(status=status.HTTP_403_FORBIDDEN)
 
         try:
-            # Savepoint, so a failure here doesn't break the request transaction.
+            # A failed update rolls back its writes and drops any queued reply.
             with transaction.atomic():
                 self._handle_update(request.data)
         except Exception:
@@ -118,8 +118,8 @@ class TelegramWebhookView(APIView):
     def _reply(self, telegram_user: TelegramUser, message: dict, text: str) -> None:
         """Send text as a reply to the user's message after the transaction commits."""
 
-        # Read these now so a bad payload fails inside the savepoint in post(),
-        # not in the on_commit callback, which runs after post() returns.
+        # Read these now so a bad payload fails inside the atomic block in post(),
+        # not in the on_commit callback, which runs after that block commits.
         telegram_user_pk = telegram_user.pk
         message_id = message["message_id"]
 

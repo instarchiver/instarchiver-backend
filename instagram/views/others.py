@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import status
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.generics import CreateAPIView
@@ -25,25 +26,26 @@ class ProcessInstagramDataView(CreateAPIView):
         media_url = validated_data["media"]
         created_datetime = validated_data["created_datetime"]
 
-        user, user_created = User.objects.only(
-            "uuid",
-            "username",
-            "created_at",
-            "updated_at",
-        ).get_or_create(
-            username=username,
-            defaults={"username": username},
-        )
+        with transaction.atomic():
+            user, user_created = User.objects.only(
+                "uuid",
+                "username",
+                "created_at",
+                "updated_at",
+            ).get_or_create(
+                username=username,
+                defaults={"username": username},
+            )
 
-        _, story_created = Story.objects.only("story_id").get_or_create(
-            story_id=story_id,
-            defaults={
-                "user": user,
-                "thumbnail_url": thumbnail_url,
-                "media_url": media_url,
-                "story_created_at": created_datetime,
-            },
-        )
+            _, story_created = Story.objects.only("story_id").get_or_create(
+                story_id=story_id,
+                defaults={
+                    "user": user,
+                    "thumbnail_url": thumbnail_url,
+                    "media_url": media_url,
+                    "story_created_at": created_datetime,
+                },
+            )
 
         response_data = {
             "message": "Instagram data processed successfully",
