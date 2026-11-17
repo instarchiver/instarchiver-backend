@@ -52,12 +52,13 @@ class GetUserPostMixIn:
         ]
 
     def fetch_post_details(self):
-        """Fetch full post details from SaveAPI for each post in get_post_urls().
+        """Fetch full post details from SaveAPI for unsaved posts in get_post_urls().
 
-        Each post costs one SaveAPI request. A post that fails (an error
-        response, a timeout or a 5xx) is logged and skipped, not retried, so
-        one bad post doesn't lose the rest. Rate limits are raised so the
-        caller can back off and try again later.
+        Posts whose id already exists in the database are skipped before calling
+        SaveAPI. Each fetched post costs one SaveAPI request. A post that fails
+        (an error response, a timeout or a 5xx) is logged and skipped, not
+        retried, so one bad post doesn't lose the rest. Rate limits are raised
+        so the caller can back off and try again later.
 
         Responses are yielded one at a time, so a caller can save each post
         before the next request. A rate limit then keeps the posts already
@@ -69,9 +70,19 @@ class GetUserPostMixIn:
         Raises:
             SaveAPIError: if SaveAPI rate limits the request
         """
+        from .post import Post  # noqa: PLC0415
+
         for post in self.get_post_urls():
             url = post["url"]
             if not url:
+                continue
+            post_id = post.get("id")
+            if (
+                isinstance(post_id, (str, int))
+                and not isinstance(post_id, bool)
+                and str(post_id) != ""
+                and Post.objects.filter(id=str(post_id)).exists()
+            ):
                 continue
             try:
                 response = fetch_post_detail(url)

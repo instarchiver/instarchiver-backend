@@ -266,6 +266,57 @@ class TestUserFetchPostDetails(TestCase):
         with pytest.raises(ImproperlyConfigured):
             list(user.fetch_post_details())
 
+    def test_skips_posts_already_in_database(self, mock_fetch):
+        """Saved posts (owned by this user or another) are skipped before SaveAPI."""
+        user = InstagramUserFactory(raw_api_data=_recent_posts("u1", "u2", "u3"))
+        PostFactory(id="0", user=user)
+        PostFactory(id="2")
+        mock_fetch.return_value = {"success": True, "id": "new"}
+
+        assert list(user.fetch_post_details()) == [{"success": True, "id": "new"}]
+        mock_fetch.assert_called_once_with("u2")
+
+    def test_skips_integer_id_including_zero_when_saved(self, mock_fetch):
+        """Integer ids (including 0) match stored string Post ids."""
+        PostFactory(id="0")
+        PostFactory(id="42")
+        user = InstagramUserFactory(
+            raw_api_data={
+                "recent_posts": [
+                    {"id": 0, "url": "u0"},
+                    {"id": 42, "url": "u42"},
+                    {"id": 99, "url": "u99"},
+                ],
+            },
+        )
+        mock_fetch.return_value = {"success": True, "id": "99"}
+
+        assert list(user.fetch_post_details()) == [{"success": True, "id": "99"}]
+        mock_fetch.assert_called_once_with("u99")
+
+    def test_fetches_when_id_is_missing_empty_bool_or_non_scalar(self, mock_fetch):
+        """Posts without a valid str/int id are still fetched from SaveAPI."""
+        PostFactory(id="True")
+        user = InstagramUserFactory(
+            raw_api_data={
+                "recent_posts": [
+                    {"id": None, "url": "u_none"},
+                    {"id": "", "url": "u_empty"},
+                    {"id": True, "url": "u_bool"},
+                    {"id": {"nested": "1"}, "url": "u_dict"},
+                ],
+            },
+        )
+        mock_fetch.return_value = {"success": True}
+
+        assert len(list(user.fetch_post_details())) == 4  # noqa: PLR2004
+        assert [c.args[0] for c in mock_fetch.call_args_list] == [
+            "u_none",
+            "u_empty",
+            "u_bool",
+            "u_dict",
+        ]
+
 
 def _saveapi_post(**overrides):
     """Return a SaveAPI post detail response shaped like a single photo."""
@@ -521,6 +572,36 @@ class TestUserUpdatePostsFromApi(TestCase):
         user.update_posts_from_api_async()
 
         mock_delay.assert_called_once_with(user.uuid)
+
+    @patch("instagram.models.user.fetch_post_detail")
+    def test_retry_after_rate_limit_skips_saved_posts(self, mock_fetch):
+        """Posts saved before a 429 rate limit are skipped on the next run."""
+        user = InstagramUserFactory(
+            raw_api_data={
+                "recent_posts": [
+                    {"id": "101", "url": "u1"},
+                    {"id": "102", "url": "u2"},
+                ],
+            },
+        )
+        mock_fetch.side_effect = [
+            _saveapi_post(video_id="101", type="image"),
+            SaveAPIError("RATE_LIMITED", "slow down", status_code=429, retryable=True),
+        ]
+
+        with pytest.raises(SaveAPIError, match="RATE_LIMITED"):
+            user.update_posts_from_api()
+
+        assert Post.objects.filter(id="101").exists()
+        assert [c.args[0] for c in mock_fetch.call_args_list] == ["u1", "u2"]
+
+        mock_fetch.reset_mock()
+        mock_fetch.side_effect = [_saveapi_post(video_id="102", type="image")]
+
+        saved = user.update_posts_from_api()
+
+        assert [post.id for post in saved] == ["102"]
+        mock_fetch.assert_called_once_with("u2")
 
 
 class TestUserUpdateProfileFromApi(TestCase):
