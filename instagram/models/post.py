@@ -101,6 +101,11 @@ class Post(InstagramModerationMixin, ViewCountMixin):
 
     history = HistoricalRecords()
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["post_created_at"], name="post_post_created_at_idx"),
+        ]
+
     def __str__(self):
         return f"{self.user.username} - {self.id}"
 

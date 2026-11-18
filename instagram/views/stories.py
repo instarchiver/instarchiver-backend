@@ -1,7 +1,3 @@
-import hashlib
-import json
-
-from django.core.cache import cache
 from django.db.models import Exists
 from django.db.models import OuterRef
 from django.db.models import Prefetch
@@ -13,7 +9,6 @@ from rest_framework import filters
 from rest_framework.generics import ListAPIView
 from rest_framework.generics import RetrieveAPIView
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
-from rest_framework.response import Response
 
 from core.utils.view_tracking import get_client_ip
 from core.utils.view_tracking import should_count_view
@@ -27,6 +22,7 @@ from instagram.paginations import StorySimilarPageNumberPagination
 from instagram.serializers.stories import StoryDetailSerializer
 from instagram.serializers.stories import StoryListSerializer
 from instagram.tasks.story import increment_story_view_count
+from instagram.views.mixins import CachedListMixin
 
 
 def _annotated_users():
@@ -43,7 +39,8 @@ def _annotated_users():
     )
 
 
-class StoryListView(ListAPIView):
+class StoryListView(CachedListMixin, ListAPIView):
+    cache_prefix = "story_list"
     serializer_class = StoryListSerializer
     pagination_class = StoryCursorPagination
     permission_classes = [IsAuthenticatedOrReadOnly]
@@ -59,21 +56,6 @@ class StoryListView(ListAPIView):
             .prefetch_related(Prefetch("user", queryset=users))
             .order_by("-created_at")
         )
-
-    def list(self, request, *args, **kwargs):
-        """List stories, cached for 30 seconds per set of query params."""
-        params = dict(request.query_params)
-        params_key = json.dumps(sorted(params.items()), sort_keys=True)
-        md5_hash = hashlib.md5(params_key.encode(), usedforsecurity=False).hexdigest()
-        cache_key = "story_list_" + md5_hash
-
-        cached_response = cache.get(cache_key)
-        if cached_response is not None:
-            return Response(cached_response)
-
-        response = super().list(request, *args, **kwargs)
-        cache.set(cache_key, response.data, 30)
-        return response
 
 
 class StoryDetailView(RetrieveAPIView):

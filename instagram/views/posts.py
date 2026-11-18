@@ -1,5 +1,4 @@
 from django.core.cache import cache
-from django.db.models import Count
 from django.db.models import Exists
 from django.db.models import OuterRef
 from django.db.models import Prefetch
@@ -26,9 +25,11 @@ from instagram.paginations import PostSimilarPageNumberPagination
 from instagram.serializers.posts import PostDetailSerializer
 from instagram.serializers.posts import PostListSerializer
 from instagram.tasks.post import increment_post_view_count
+from instagram.views.mixins import CachedListMixin
 
 
-class PostListView(ListAPIView):
+class PostListView(CachedListMixin, ListAPIView):
+    cache_prefix = "post_list"
     queryset = Post.objects.all().order_by("-created_at")
     serializer_class = PostListSerializer
     pagination_class = PostCursorPagination
@@ -62,7 +63,6 @@ class PostListView(ListAPIView):
                 Prefetch("user", queryset=annotated_users),
                 Prefetch("postmedia_set", queryset=ordered_postmedia),
             )
-            .annotate(media_count=Count("postmedia"))
             .order_by("-created_at")
         )
 
@@ -154,7 +154,6 @@ class PostAISearchView(ListAPIView):
                 Prefetch("postmedia_set", queryset=ordered_postmedia),
             )
             .annotate(
-                media_count=Count("postmedia"),
                 similarity_score=1 - L2Distance("embedding", query_embedding),
             )
             .order_by("-similarity_score")
@@ -226,7 +225,6 @@ class PostSimilarView(ListAPIView):
                 Prefetch("postmedia_set", queryset=ordered_postmedia),
             )
             .annotate(
-                media_count=Count("postmedia"),
                 similarity_score=1 - L2Distance("embedding", source_post.embedding),
             )
             .order_by("-similarity_score")
