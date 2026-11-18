@@ -5,6 +5,7 @@ from unittest.mock import patch
 from django.core.cache import cache
 from django.db import connection
 from django.test import TestCase
+from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from rest_framework import status
@@ -468,10 +469,25 @@ class StoryListViewTest(TestCase):
         assert response.data["next"] is not None
 
     def _make_cache_key(self, params: dict) -> str:
-        """Helper to replicate the cache key logic from StoryListView."""
-        params_key = json.dumps(sorted(params.items()), sort_keys=True)
-        md5_hash = hashlib.md5(params_key.encode(), usedforsecurity=False).hexdigest()
+        """Helper to replicate the cache key logic from CachedListMixin."""
+        key_source = json.dumps(["http://testserver/", sorted(params.items())])
+        md5_hash = hashlib.md5(key_source.encode(), usedforsecurity=False).hexdigest()
         return "story_list_" + md5_hash
+
+    @override_settings(ALLOWED_HOSTS=["*"], USE_X_FORWARDED_HOST=True)
+    def test_cache_is_not_shared_across_hosts(self):
+        """A forged host must not put its pagination links in other hosts' cache."""
+        StoryFactory.create_batch(3)
+
+        forged = self.client.get(
+            self.url,
+            {"page_size": 1},
+            headers={"x-forwarded-host": "evil.example"},
+        )
+        assert "evil.example" in forged.data["next"]
+
+        response = self.client.get(self.url, {"page_size": 1})
+        assert "evil.example" not in response.data["next"]
 
     def test_cache_miss_on_first_request(self):
         """Test that first request doesn't find cache and creates it."""

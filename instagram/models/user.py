@@ -411,6 +411,9 @@ class User(GetUserPostMixIn, GetUserStoryMixIn, ViewCountMixin):
     )
     history = HistoricalRecords()
 
+    class Meta:
+        indexes = [models.Index(fields=["created_at"], name="user_created_at_idx")]
+
     def __str__(self):
         return self.username
 

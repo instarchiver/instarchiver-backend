@@ -60,6 +60,7 @@ class Story(InstagramModerationMixin, ViewCountMixin):
     class Meta:
         verbose_name = "Story"
         verbose_name_plural = "Stories"
+        indexes = [models.Index(fields=["created_at"], name="story_created_at_idx")]
 
     def __str__(self):
         return f"{self.user.username} - {self.story_id}"

@@ -49,8 +49,8 @@ class PostListSerializer(serializers.ModelSerializer):
         ]
 
     def get_media_count(self, obj):
-        """Return the count of media items for this post."""
-        return obj.media_count
+        """Return the number of media items, counted from the prefetched rows."""
+        return len(obj.postmedia_set.all())
 
 
 class PostDetailSerializer(serializers.ModelSerializer):

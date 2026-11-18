@@ -17,6 +17,7 @@ class PostListViewTest(TestCase):
 
     def setUp(self):
         """Set up test client and common test data."""
+        cache.clear()
         self.client = APIClient()
         self.url = reverse("instagram:post_list")
 
