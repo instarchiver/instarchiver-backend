@@ -8,8 +8,9 @@ from curl_cffi.requests import exceptions as curl_exceptions
 from django.test import TestCase
 
 from settings.models import ProxySetting
-from tools.instagram import MAX_POSITIVE_INT32
-from tools.instagram import MAX_PROFILE_HTML_BYTES
+from tools.constants import DEFAULT_MAX_HTML_BYTES
+from tools.constants import MAX_POSITIVE_INT32
+from tools.http import ProxyConfig
 from tools.instagram import InstagramProfileError
 from tools.instagram import _parse_count
 from tools.instagram import _parse_profile_page
@@ -182,7 +183,7 @@ class TestFetchInstagramProfile(TestCase):
             assert exc_info.value.code == "INVALID_USERNAME"
             assert exc_info.value.status_code == HTTPStatus.BAD_REQUEST
 
-    @patch("tools.instagram.Session")
+    @patch("tools.http.Session")
     def test_uses_proxy_setting_and_disables_proxy_tls_verify_when_false(
         self,
         mock_session_cls,
@@ -205,19 +206,19 @@ class TestFetchInstagramProfile(TestCase):
         assert kwargs["verify"] is False
         response.close.assert_called_once()
 
-    @patch("tools.instagram.Session")
+    @patch("tools.http.Session")
     def test_explicit_none_proxy_skips_proxy_setting(self, mock_session_cls):
         session = mock_session_cls.return_value.__enter__.return_value
         session.get.return_value = _mock_stream_response(FULL_PAGE)
 
-        fetch_instagram_profile("udon05310531", proxy_url=None, verify_ssl=True)
+        fetch_instagram_profile("udon05310531", proxy=ProxyConfig())
 
         session.curl.setopt.assert_not_called()
         kwargs = session.get.call_args.kwargs
-        assert "proxy" not in kwargs
+        assert kwargs.get("proxy") is None
         assert kwargs["verify"] is True
 
-    @patch("tools.instagram.Session")
+    @patch("tools.http.Session")
     def test_login_wall_redirect_raises_502(self, mock_session_cls):
         session = mock_session_cls.return_value.__enter__.return_value
         session.get.return_value = _mock_stream_response(
@@ -226,26 +227,24 @@ class TestFetchInstagramProfile(TestCase):
         )
 
         with pytest.raises(InstagramProfileError) as exc_info:
-            fetch_instagram_profile("someone", proxy_url=None, verify_ssl=True)
+            fetch_instagram_profile("someone", proxy=ProxyConfig())
 
         assert exc_info.value.code == "LOGIN_WALL"
         assert exc_info.value.status_code == HTTPStatus.BAD_GATEWAY
 
-    @patch("tools.instagram.Session")
+    @patch("tools.http.Session")
     def test_http_404_returns_none_and_429_raises_rate_limited(self, mock_session_cls):
         session = mock_session_cls.return_value.__enter__.return_value
         session.get.return_value = _mock_stream_response("", status_code=404)
-        assert (
-            fetch_instagram_profile("missing", proxy_url=None, verify_ssl=True) is None
-        )
+        assert fetch_instagram_profile("missing", proxy=ProxyConfig()) is None
 
         session.get.return_value = _mock_stream_response("", status_code=429)
         with pytest.raises(InstagramProfileError) as exc_info:
-            fetch_instagram_profile("limited", proxy_url=None, verify_ssl=True)
+            fetch_instagram_profile("limited", proxy=ProxyConfig())
         assert exc_info.value.code == "RATE_LIMITED"
         assert exc_info.value.status_code == HTTPStatus.TOO_MANY_REQUESTS
 
-    @patch("tools.instagram.Session")
+    @patch("tools.http.Session")
     def test_retries_proxy_error_once_and_redacts_credentials(self, mock_session_cls):
         session = mock_session_cls.return_value.__enter__.return_value
         session.get.side_effect = curl_exceptions.ProxyError(
@@ -259,28 +258,28 @@ class TestFetchInstagramProfile(TestCase):
         assert "proxyuser" not in exc_info.value.message
         assert "proxypass" not in exc_info.value.message
 
-    @patch("tools.instagram.Session")
+    @patch("tools.http.Session")
     def test_ssl_error_does_not_retry(self, mock_session_cls):
         session = mock_session_cls.return_value.__enter__.return_value
         session.get.side_effect = curl_exceptions.SSLError("TLS handshake failed")
 
         with pytest.raises(InstagramProfileError) as exc_info:
-            fetch_instagram_profile("someone", proxy_url=None, verify_ssl=True)
+            fetch_instagram_profile("someone", proxy=ProxyConfig())
 
         assert session.get.call_count == 1
         assert exc_info.value.status_code == HTTPStatus.BAD_GATEWAY
 
-    @patch("tools.instagram.Session")
+    @patch("tools.http.Session")
     def test_oversized_response_aborted_and_closed(self, mock_session_cls):
         session = mock_session_cls.return_value.__enter__.return_value
         response = MagicMock()
         response.status_code = 200
         response.url = "https://www.instagram.com/someone/"
-        response.iter_content.return_value = [b"a" * (MAX_PROFILE_HTML_BYTES + 1)]
+        response.iter_content.return_value = [b"a" * (DEFAULT_MAX_HTML_BYTES + 1)]
         session.get.return_value = response
 
         with pytest.raises(InstagramProfileError) as exc_info:
-            fetch_instagram_profile("someone", proxy_url=None, verify_ssl=True)
+            fetch_instagram_profile("someone", proxy=ProxyConfig())
 
         assert exc_info.value.code == "UPSTREAM_ERROR"
         response.close.assert_called_once()
