@@ -236,6 +236,11 @@ UNFOLD = {
                         "icon": "send",
                         "link": "/admin/settings/telegramsetting/",
                     },
+                    {
+                        "title": "Proxy Settings",
+                        "icon": "vpn_lock",
+                        "link": "/admin/settings/proxysetting/",
+                    },
                 ],
             },
         ],

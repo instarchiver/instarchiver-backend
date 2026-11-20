@@ -107,6 +107,7 @@ LOCAL_APPS = [
     "payments",
     "settings",
     "telegram_bot",
+    "tools",
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

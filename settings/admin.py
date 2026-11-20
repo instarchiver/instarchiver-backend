@@ -17,6 +17,7 @@ from .models import CoreAPISetting
 from .models import FirebaseAdminSetting
 from .models import OpenAISetting
 from .models import OpenRouterSetting
+from .models import ProxySetting
 from .models import StripeSetting
 from .models import TelegramSetting
 
@@ -289,3 +290,25 @@ class TelegramSettingAdmin(SingletonModelAdmin, ModelAdmin):
             )
 
         return redirect(redirect_url)
+
+
+@admin.register(ProxySetting)
+class ProxySettingAdmin(SingletonModelAdmin, ModelAdmin):
+    fieldsets = (
+        (
+            "Proxy Configuration",
+            {
+                "fields": ("proxy_url", "verify_ssl"),
+                "description": (
+                    "Configure the proxy used for direct Instagram profile requests."
+                ),
+            },
+        ),
+        (
+            "Timestamps",
+            {
+                "fields": ("created_at", "updated_at"),
+            },
+        ),
+    )
+    readonly_fields = ("created_at", "updated_at")
