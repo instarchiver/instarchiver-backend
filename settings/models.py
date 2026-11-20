@@ -5,6 +5,8 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from solo.models import SingletonModel
 
+from settings.validators import validate_proxy_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -216,3 +218,36 @@ class TelegramSetting(SingletonModel):
             return response.json()
         except ValueError:
             return {"ok": False, "description": response.text[:500]}
+
+
+class ProxySetting(SingletonModel):
+    proxy_url = models.CharField(
+        max_length=512,
+        default="",
+        blank=True,
+        validators=[validate_proxy_url],
+        help_text=(
+            "Proxy URL for direct Instagram profile requests, e.g. "
+            "http://user:pass@host:port or socks5://host:port"
+        ),
+    )
+    verify_ssl = models.BooleanField(
+        default=True,
+        help_text=(
+            "Verify TLS certificates when connecting through a proxy. "
+            "Disable only for MITM proxies."
+        ),
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        self.proxy_url = (self.proxy_url or "").strip()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return "Proxy Settings"
+
+    class Meta:
+        verbose_name = "Proxy Setting"
