@@ -30,8 +30,10 @@ class Payment(models.Model):
     ]
 
     REFERENCE_STRIPE = "STRIPE"
+    REFERENCE_PADDLE = "PADDLE"
     REFERENCE_CHOICES = [
         (REFERENCE_STRIPE, "Stripe"),
+        (REFERENCE_PADDLE, "Paddle"),
     ]
 
     TYPE_INSTAGRAM_USER_STORY_CREDIT = "INSTAGRAM_USER_STORY_CREDIT"

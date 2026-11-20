@@ -14,3 +14,5 @@ class PaymentSettingAdmin(ModelAdmin, SimpleHistoryAdmin):
 @admin.register(GatewayOption)
 class GatewayOptionAdmin(ModelAdmin, SimpleHistoryAdmin):
     model = GatewayOption
+
+    list_display = ("name", "is_active", "created_at", "updated_at")
