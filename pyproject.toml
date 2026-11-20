@@ -14,7 +14,8 @@ include = [
     "api_logs/**",
     "instagram/**",
     "authentication/**",
-    "telegram_bot/**"
+    "telegram_bot/**",
+    "tools/**"
 ]
 omit = ["*/migrations/*", "*/tests/*"]
 plugins = ["django_coverage_plugin"]
