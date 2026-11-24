@@ -349,6 +349,14 @@ settings = CoreAPISetting.get_solo()
 api_url = settings.api_url
 ```
 
+Production sets `SOLO_CACHE = "default"` (Redis) with `SOLO_CACHE_TIMEOUT = 60` in `config/settings/production.py` so Gunicorn and Celery workers share cached singletons. Local and test settings leave `SOLO_CACHE` as `None` because they use `LocMemCache`.
+
+Django admin saves and `.save()` update the cache via `set_to_cache()`, and `.delete()` invalidates it via `clear_cache()`. One exception is `PaymentSettingAdmin`, which does not inherit `SingletonModelAdmin`, so admin bulk deletes run `queryset.delete()` and bypass `clear_cache()`.
+
+Call `Model.clear_cache()` (for example `CoreAPISetting.clear_cache()`) after any operation that bypasses `.save()` or changes cached model state: direct SQL edits, `queryset.update()`, `queryset.delete()`, migrations that alter `SingletonModel` fields, or Django version upgrades. `IGNORE_EXCEPTIONS` in `django-redis` catches Redis connection, timeout, and response errors; pickle deserialization errors still propagate.
+
+Never run `cache.clear()` in production. `CACHES["default"]` shares Redis DB 0 with the Celery broker, and `django-redis` runs `FLUSHDB`, which wipes queued Celery tasks and Telegram duplicate-update keys.
+
 ### API Request Logging
 
 All external API calls automatically log to `APIRequestLog` via `core.utils.core_api.make_request()`. The log captures:

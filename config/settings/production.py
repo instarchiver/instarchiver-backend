@@ -50,6 +50,12 @@ CACHES = {
     },
 }
 
+# django-solo
+# ------------------------------------------------------------------------------
+# https://github.com/lazybird/django-solo#caching
+SOLO_CACHE = "default"
+SOLO_CACHE_TIMEOUT = 60  # 1 minute
+
 # SECURITY
 # ------------------------------------------------------------------------------
 # https://docs.djangoproject.com/en/dev/ref/settings/#secure-proxy-ssl-header
