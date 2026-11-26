@@ -17,8 +17,8 @@ from instagram.constants import LIST_USER_DEFERRED
 from instagram.constants import STORY_FIELDS
 from instagram.models import Story
 from instagram.models import User as InstagramUser
+from instagram.paginations import SimilarPagination
 from instagram.paginations import StoryCursorPagination
-from instagram.paginations import StorySimilarPageNumberPagination
 from instagram.serializers.stories import StoryDetailSerializer
 from instagram.serializers.stories import StoryListSerializer
 from instagram.tasks.story import increment_story_view_count
@@ -81,7 +81,7 @@ class StorySimilarView(ListAPIView):
     """Stories ranked by embedding similarity (L2Distance) to a given story."""
 
     serializer_class = StoryListSerializer
-    pagination_class = StorySimilarPageNumberPagination
+    pagination_class = SimilarPagination
     permission_classes = [IsAuthenticatedOrReadOnly]
 
     @extend_schema(
@@ -92,7 +92,7 @@ class StorySimilarView(ListAPIView):
         ),
         responses={
             200: StoryListSerializer(many=True),
-            404: OpenApiResponse(description="Story not found"),
+            404: OpenApiResponse(description="Invalid or out-of-range page"),
         },
     )
     def get(self, request, *args, **kwargs):

@@ -5,8 +5,10 @@ import pytest
 from django.core.files.storage import InMemoryStorage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from pgvector.django import HnswIndex
 from PIL import Image
 
+from instagram.models import Story
 from instagram.models.mixins import InstagramModerationMixin
 from instagram.tests.factories import StoryFactory
 
@@ -154,6 +156,18 @@ class TestStoryModel(TestCase):
         story.refresh_from_db()
         assert story.is_flagged is False
         assert story.moderated_at is not None
+
+    def test_embedding_hnsw_index_defined(self):
+        """Story.Meta.indexes defines an HnswIndex for vector_l2_ops."""
+        indexes = Story._meta.indexes  # noqa: SLF001
+        hnsw_indexes = [idx for idx in indexes if isinstance(idx, HnswIndex)]
+        assert len(hnsw_indexes) == 1
+        idx = hnsw_indexes[0]
+        assert idx.name == "story_embedding_hnsw_idx"
+        assert idx.fields == ["embedding"]
+        assert idx.opclasses == ["vector_l2_ops"]
+        assert idx.m == 16  # noqa: PLR2004
+        assert idx.ef_construction == 64  # noqa: PLR2004
 
 
 class TestInstagramModerationMixin(TestCase):

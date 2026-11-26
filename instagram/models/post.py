@@ -7,6 +7,7 @@ from django.db import models
 from django.db.models import F
 from django.db.models import Q
 from django.utils import timezone
+from pgvector.django import HnswIndex
 from pgvector.django import VectorField
 from PIL import Image as PILImage
 from PIL import ImageOps
@@ -104,6 +105,13 @@ class Post(InstagramModerationMixin, ViewCountMixin):
     class Meta:
         indexes = [
             models.Index(fields=["post_created_at"], name="post_post_created_at_idx"),
+            HnswIndex(
+                name="post_embedding_hnsw_idx",
+                fields=["embedding"],
+                m=16,
+                ef_construction=64,
+                opclasses=["vector_l2_ops"],
+            ),
         ]
 
     def __str__(self):

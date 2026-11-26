@@ -4,13 +4,18 @@ from unittest.mock import patch
 
 from django.core.cache import cache
 from django.db import connection
+from django.db import transaction
 from django.test import TestCase
 from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from pgvector.django import L2Distance
 from rest_framework import status
+from rest_framework.request import Request
 from rest_framework.test import APIClient
 
+from instagram.models import Story
+from instagram.paginations import SimilarPagination
 from instagram.tests.factories import InstagramUserFactory
 from instagram.tests.factories import StoryFactory
 
@@ -1044,7 +1049,7 @@ class StorySimilarViewTest(TestCase):
         response = self.client.get(url)
 
         assert response.status_code == status.HTTP_200_OK
-        assert "count" in response.data
+        assert "count" not in response.data
         assert "next" in response.data
         assert "previous" in response.data
         assert "results" in response.data
@@ -1168,6 +1173,165 @@ class StorySimilarViewTest(TestCase):
         usernames = {story["user"]["username"] for story in results}
         assert "user1" in usernames
         assert "user2" in usernames
+
+    def test_similar_stories_no_count_query(self):
+        """Similar stories endpoint must not execute a COUNT(*) query."""
+        user = InstagramUserFactory()
+        source_story = StoryFactory(user=user, embedding=[0.1] * 1536)
+        StoryFactory(user=user, embedding=[0.2] * 1536)
+
+        url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": source_story.story_id},
+        )
+        with CaptureQueriesContext(connection) as ctx:
+            response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert not any("COUNT(*)" in q["sql"].upper() for q in ctx.captured_queries)
+
+    def test_similar_stories_pagination_edge_cases(self):
+        """Invalid, out-of-range, and capped pages behave as expected."""
+        user = InstagramUserFactory()
+        source_story = StoryFactory(user=user, embedding=[0.1] * 1536)
+        for _ in range(25):
+            StoryFactory(user=user, embedding=[0.2] * 1536)
+
+        url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": source_story.story_id},
+        )
+        for bad_page in ("0", "-1", "abc", "last", "3", "11"):
+            resp = self.client.get(url, {"page": bad_page})
+            assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+        page2 = self.client.get(url, {"page": 2, "page_size": 10})
+        assert page2.status_code == status.HTTP_200_OK
+        assert "page=" not in page2.data["previous"]
+
+        page3 = self.client.get(url, {"page": 3, "page_size": 10})
+        assert page3.status_code == status.HTTP_200_OK
+        assert "page=2" in page3.data["previous"]
+
+    def test_similar_stories_max_results_cap(self):
+        """Pagination caps total reachable results at max_results (200)."""
+        user = InstagramUserFactory()
+        source_story = StoryFactory(user=user, embedding=[0.1] * 1536)
+        for i in range(205):
+            StoryFactory(
+                user=user,
+                embedding=[float(i + 1) / 1000.0] + [0.0] * 1535,
+            )
+
+        url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": source_story.story_id},
+        )
+        page2 = self.client.get(url, {"page": 2, "page_size": 100})
+        assert page2.status_code == status.HTTP_200_OK
+        assert len(page2.data["results"]) == 100  # noqa: PLR2004
+        assert page2.data["next"] is None
+
+        page3 = self.client.get(url, {"page": 3, "page_size": 100})
+        assert page3.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_similar_pagination_helpers_and_plain_list(self):
+        """SimilarPagination.to_html returns empty string and handles plain lists."""
+        paginator = SimilarPagination()
+        assert paginator.to_html() == ""
+
+        wsgi_request = self.client.get("/?page=2&page_size=2").wsgi_request
+        items = paginator.paginate_queryset(
+            [1, 2, 3, 4, 5],
+            Request(wsgi_request),
+        )
+        assert items == [3, 4]
+        assert paginator.has_next is True
+
+    def test_similar_stories_over_40_distinct_embeddings(self):
+        """Paging beyond ef_search=40 returns all distinct rows without duplicates."""
+        user = InstagramUserFactory()
+        source_story = StoryFactory(user=user, embedding=[0.0] * 1536)
+        for i in range(1, 61):
+            StoryFactory(
+                user=user,
+                embedding=[float(i) / 100.0] + [0.0] * 1535,
+            )
+
+        url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": source_story.story_id},
+        )
+        resp_50 = self.client.get(url, {"page_size": 50})
+        assert resp_50.status_code == status.HTTP_200_OK
+        assert len(resp_50.data["results"]) == 50  # noqa: PLR2004
+        assert resp_50.data["next"] is not None
+
+        seen_ids = []
+        for page in (1, 2, 3):
+            resp = self.client.get(url, {"page": page, "page_size": 20})
+            assert resp.status_code == status.HTTP_200_OK
+            seen_ids.extend(item["story_id"] for item in resp.data["results"])
+
+        assert len(seen_ids) == 60  # noqa: PLR2004
+        assert len(set(seen_ids)) == 60  # noqa: PLR2004
+
+    def test_similar_stories_over_40_identical_embeddings(self):
+        """Paging through >40 tied embeddings yields deterministic PK order."""
+        user = InstagramUserFactory()
+        source_story = StoryFactory(user=user, embedding=[0.0] * 1536)
+        tied_ids = sorted(
+            StoryFactory(user=user, embedding=[0.1] * 1536).story_id for _ in range(60)
+        )
+        for i in range(10):
+            StoryFactory(
+                user=user,
+                embedding=[float(i + 5)] + [0.0] * 1535,
+            )
+
+        url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": source_story.story_id},
+        )
+        seen_ids = []
+        for page in (1, 2, 3):
+            resp = self.client.get(url, {"page": page, "page_size": 20})
+            assert resp.status_code == status.HTTP_200_OK
+            seen_ids.extend(item["story_id"] for item in resp.data["results"])
+
+        assert seen_ids == tied_ids
+
+    def test_similar_stories_iterative_scan_guc_does_not_leak(self):
+        """hnsw.iterative_scan is restored after a request inside an atomic test."""
+        user = InstagramUserFactory()
+        source_story = StoryFactory(user=user, embedding=[0.1] * 1536)
+        StoryFactory(user=user, embedding=[0.2] * 1536)
+
+        url = reverse(
+            "instagram:story_similar",
+            kwargs={"story_id": source_story.story_id},
+        )
+        response = self.client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+
+        with connection.cursor() as cursor:
+            cursor.execute("SHOW hnsw.iterative_scan")
+            assert cursor.fetchone()[0] == "off"
+
+    def test_similar_stories_uses_hnsw_index_explain(self):
+        """The similarity queryset can use story_embedding_hnsw_idx."""
+        qs = (
+            Story.objects.filter(embedding__isnull=False)
+            .exclude(story_id="missing")
+            .order_by(L2Distance("embedding", [0.1] * 1536), "story_id")[:21]
+        )
+        sql, params = qs.query.sql_with_params()
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute("SET LOCAL enable_seqscan = off")
+            cursor.execute(f"EXPLAIN {sql}", params)
+            plan = "\n".join(row[0] for row in cursor.fetchall())
+
+        assert "story_embedding_hnsw_idx" in plan
 
 
 def _select_lists(queries, table):
