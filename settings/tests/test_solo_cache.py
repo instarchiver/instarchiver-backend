@@ -15,6 +15,7 @@ from django.urls import reverse
 
 from settings.models import CoreAPISetting
 from settings.models import FirebaseAdminSetting
+from settings.models import FrontendSetting
 
 DjangoUser = get_user_model()
 
@@ -218,3 +219,54 @@ class SoloCacheAdminSaveTest(TestCase):
 
             assert resaved.project_id == "demo-2"
             assert resaved.service_account_json == '{"project_id": "demo-1"}'
+
+    def test_frontend_setting_admin_save_updates_cache(self):
+        changelist_url = reverse("admin:settings_frontendsetting_changelist")
+        changelist_response = self.client.get(changelist_url, follow=True)
+        assert changelist_response.status_code == HTTPStatus.OK
+
+        setting = FrontendSetting.get_solo()
+        assert setting.allow_add_user is True
+
+        change_url = reverse(
+            "admin:settings_frontendsetting_change",
+            args=(setting.pk,),
+        )
+
+        disable_response = self.client.post(change_url, data={})
+        assert disable_response.status_code == HTTPStatus.FOUND
+
+        with self.assertNumQueries(0):
+            disabled = FrontendSetting.get_solo()
+        assert disabled.allow_add_user is False
+
+        enable_response = self.client.post(change_url, data={"allow_add_user": "on"})
+        assert enable_response.status_code == HTTPStatus.FOUND
+
+        with self.assertNumQueries(0):
+            enabled = FrontendSetting.get_solo()
+        assert enabled.allow_add_user is True
+
+        history_records = list(
+            FrontendSetting.history.order_by("history_date", "history_id"),
+        )
+        assert [record.allow_add_user for record in history_records] == [
+            True,
+            False,
+            True,
+        ]
+        assert history_records[-1].history_user == self.superuser
+
+        history_url = reverse("admin:settings_frontendsetting_history")
+        history_response = self.client.get(history_url)
+        assert history_response.status_code == HTTPStatus.OK
+        assert "simple_history/object_history.html" in [
+            template.name for template in history_response.templates
+        ]
+
+        simple_history_url = reverse(
+            "admin:settings_frontendsetting_simple_history",
+            args=(setting.pk, history_records[-1].pk),
+        )
+        simple_history_response = self.client.get(simple_history_url)
+        assert simple_history_response.status_code == HTTPStatus.OK

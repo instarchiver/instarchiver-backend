@@ -6,6 +6,7 @@ from django.shortcuts import redirect
 from django.urls import reverse
 from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _
+from simple_history.admin import SimpleHistoryAdmin
 from solo.admin import SingletonModelAdmin
 from unfold.admin import ModelAdmin
 from unfold.decorators import action
@@ -15,6 +16,7 @@ from core.utils import saveapi
 
 from .models import CoreAPISetting
 from .models import FirebaseAdminSetting
+from .models import FrontendSetting
 from .models import OpenAISetting
 from .models import OpenRouterSetting
 from .models import StripeSetting
@@ -289,3 +291,23 @@ class TelegramSettingAdmin(SingletonModelAdmin, ModelAdmin):
             )
 
         return redirect(redirect_url)
+
+
+@admin.register(FrontendSetting)
+class FrontendSettingAdmin(SimpleHistoryAdmin, SingletonModelAdmin, ModelAdmin):
+    fieldsets = (
+        (
+            "Feature Toggles",
+            {
+                "fields": ("allow_add_user",),
+                "description": "Control frontend feature availability",
+            },
+        ),
+        (
+            "Timestamps",
+            {
+                "fields": ("created_at", "updated_at"),
+            },
+        ),
+    )
+    readonly_fields = ("created_at", "updated_at")

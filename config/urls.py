@@ -44,6 +44,7 @@ urlpatterns = [
     ),
     path("instagram/", include("instagram.urls")),
     path("payments/", include("payments.urls")),
+    path("settings/", include("settings.urls")),
     path("telegram/", include("telegram_bot.urls")),
     # Media files
     *static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT),
