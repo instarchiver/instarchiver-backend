@@ -3,6 +3,7 @@ import logging
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from simple_history.models import HistoricalRecords
 from solo.models import SingletonModel
 
 logger = logging.getLogger(__name__)
@@ -216,3 +217,20 @@ class TelegramSetting(SingletonModel):
             return response.json()
         except ValueError:
             return {"ok": False, "description": response.text[:500]}
+
+
+class FrontendSetting(SingletonModel):
+    allow_add_user = models.BooleanField(
+        default=True,
+        help_text="Allow users to add Instagram profiles from the frontend",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
+
+    def __str__(self):
+        return "Frontend Settings"
+
+    class Meta:
+        verbose_name = "Frontend Setting"

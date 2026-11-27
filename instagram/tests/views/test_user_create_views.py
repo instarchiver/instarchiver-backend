@@ -8,6 +8,7 @@ from rest_framework.test import APIClient
 from core.users.tests.factories import UserFactory
 from instagram.models import User as InstagramUser
 from instagram.tests.factories import InstagramUserFactory
+from settings.models import FrontendSetting
 
 
 class InstagramUserCreateViewTest(TestCase):
@@ -109,6 +110,87 @@ class InstagramUserCreateViewTest(TestCase):
         mock_update.return_value = None
         response = self.client.post(self.url, {}, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @patch("instagram.serializers.users.InstagramUser.update_profile_from_api")
+    def test_create_user_disabled_returns_403_for_normal_user(self, mock_update):
+        """POST returns 403 and creates no user when allow_add_user is False."""
+        setting = FrontendSetting.get_solo()
+        setting.allow_add_user = False
+        setting.save()
+
+        response = self.client.post(
+            self.url,
+            {"username": "blockeduser"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.json() == {
+            "detail": "Adding new users is currently disabled.",
+        }
+        mock_update.assert_not_called()
+        assert not InstagramUser.objects.filter(username="blockeduser").exists()
+
+    @patch("instagram.serializers.users.InstagramUser.update_profile_from_api")
+    def test_create_user_disabled_returns_403_for_superuser(self, mock_update):
+        """POST returns 403 even for a superuser when allow_add_user is False."""
+        setting = FrontendSetting.get_solo()
+        setting.allow_add_user = False
+        setting.save()
+
+        superuser = UserFactory(is_superuser=True, is_staff=True)
+        superuser_client = APIClient()
+        superuser_client.force_authenticate(user=superuser)
+
+        response = superuser_client.post(
+            self.url,
+            {"username": "blockedsuperuser"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.json() == {
+            "detail": "Adding new users is currently disabled.",
+        }
+        mock_update.assert_not_called()
+        assert not InstagramUser.objects.filter(username="blockedsuperuser").exists()
+
+    def test_list_users_still_returns_200_when_add_user_disabled(self):
+        """GET user list stays 200 when allow_add_user is False."""
+        setting = FrontendSetting.get_solo()
+        setting.allow_add_user = False
+        setting.save()
+
+        response = self.client.get(self.url)
+
+        assert response.status_code == status.HTTP_200_OK
+
+    @patch("instagram.serializers.users.InstagramUser.update_profile_from_api")
+    def test_create_user_succeeds_when_re_enabled(self, mock_update):
+        """POST returns 201 after allow_add_user is toggled back to True."""
+        mock_update.return_value = None
+        setting = FrontendSetting.get_solo()
+        setting.allow_add_user = False
+        setting.save()
+
+        blocked = self.client.post(
+            self.url,
+            {"username": "reenableduser"},
+            format="json",
+        )
+        assert blocked.status_code == status.HTTP_403_FORBIDDEN
+
+        setting.allow_add_user = True
+        setting.save()
+
+        response = self.client.post(
+            self.url,
+            {"username": "reenableduser"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert InstagramUser.objects.filter(username="reenableduser").exists()
 
 
 class InstagramUserAddStoryCreditViewTest(TestCase):

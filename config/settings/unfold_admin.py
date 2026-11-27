@@ -5,6 +5,8 @@ For more information about available options, see:
 https://unfoldadmin.com/docs/configuration/settings/
 """
 
+from django.urls import reverse_lazy
+
 UNFOLD = {
     "SITE_TITLE": "Instarchiver Admin",
     "SITE_HEADER": "Instarchiver",
@@ -235,6 +237,13 @@ UNFOLD = {
                         "title": "Telegram Settings",
                         "icon": "send",
                         "link": "/admin/settings/telegramsetting/",
+                    },
+                    {
+                        "title": "Frontend Settings",
+                        "icon": "tune",
+                        "link": reverse_lazy(
+                            "admin:settings_frontendsetting_changelist",
+                        ),
                     },
                 ],
             },

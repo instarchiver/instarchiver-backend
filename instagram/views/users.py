@@ -28,6 +28,7 @@ from instagram.serializers.users import InstagramUserHistoryListSerializer
 from instagram.serializers.users import InstagramUserListSerializer
 from instagram.tasks.user import increment_user_view_count
 from payments.utils import stripe_create_instagram_user_story_credits_payment
+from settings.models import FrontendSetting
 
 
 class InstagramUserListCreateView(ListCreateAPIView):
@@ -56,6 +57,12 @@ class InstagramUserListCreateView(ListCreateAPIView):
         )
 
     def create(self, request, *args, **kwargs):
+        if not FrontendSetting.get_solo().allow_add_user:
+            return Response(
+                {"detail": "Adding new users is currently disabled."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # Check rate limit: max 3 users created in last 24 hours
         time_threshold = timezone.localdate() - timedelta(days=1)
         max_creations_per_day = 3
