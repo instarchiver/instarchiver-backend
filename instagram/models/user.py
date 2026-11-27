@@ -1,5 +1,7 @@
+import contextlib
 import hashlib
 import logging
+import math
 import uuid
 from datetime import UTC
 from datetime import datetime
@@ -23,6 +25,21 @@ from instagram.misc import get_user_profile_picture_upload_location
 from instagram.models.mixins import ViewCountMixin
 
 logger = logging.getLogger(__name__)
+MAX_MEDIA_URL_LENGTH = 2500
+
+
+def _strip_nul_bytes(value):
+    """Recursively remove NUL bytes so PostgreSQL JSONB accepts upstream payloads."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, list):
+        return [_strip_nul_bytes(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            _strip_nul_bytes(k) if isinstance(k, str) else k: _strip_nul_bytes(v)
+            for k, v in value.items()
+        }
+    return value
 
 
 class GetUserPostMixIn:
@@ -138,6 +155,68 @@ class GetUserPostMixIn:
             raise ValueError(msg)
         return variants[post_type]
 
+    def _save_post_from_saveapi(self, response):
+        """Save one SaveAPI post detail response and return (post, created)."""
+        from .post import Post  # noqa: PLC0415
+
+        raw_id = response.get("video_id")
+        if (
+            isinstance(raw_id, bool)
+            or not isinstance(raw_id, (str, int))
+            or not str(raw_id).strip()
+        ):
+            logger.warning(
+                "Skipping post of user %s: response has no video_id",
+                self.username,
+            )
+            return None, False
+
+        post_id = str(raw_id).strip()
+        raw_meta = response.get("meta")
+        meta = raw_meta if isinstance(raw_meta, dict) else {}
+        raw_text = meta.get("text")
+        caption = raw_text.replace("\x00", "") if isinstance(raw_text, str) else ""
+
+        # meta.thumbnail is sometimes the video URL, so use the first media.
+        medias = response.get("medias")
+        first_media = medias[0] if isinstance(medias, list) and medias else {}
+        raw_thumb = first_media.get("url") if isinstance(first_media, dict) else None
+        thumbnail_url = (
+            raw_thumb
+            if isinstance(raw_thumb, str) and len(raw_thumb) <= MAX_MEDIA_URL_LENGTH
+            else ""
+        )
+        defaults = {
+            "user": self,
+            "variant": self._get_post_type(response),
+            "caption": caption,
+            "thumbnail_url": thumbnail_url,
+            # credits is billing data, not post data.
+            "raw_data": _strip_nul_bytes(
+                {key: value for key, value in response.items() if key != "credits"},
+            ),
+        }
+        published_at = meta.get("published_at")
+        if (
+            isinstance(published_at, (int, float))
+            and not isinstance(published_at, bool)
+            and math.isfinite(published_at)
+        ):
+            with contextlib.suppress(OverflowError, OSError, ValueError):
+                defaults["post_created_at"] = datetime.fromtimestamp(
+                    published_at,
+                    tz=UTC,
+                )
+
+        with transaction.atomic():
+            post, created = Post.objects.get_or_create(
+                id=post_id,
+                defaults=defaults,
+            )
+            if created:
+                post.create_media()
+        return post, created
+
     def save_post_from_saveapi(self, response):
         """Save one SaveAPI post detail response as a Post owned by this user.
 
@@ -164,44 +243,7 @@ class GetUserPostMixIn:
             ValueError: if the response has an unknown post type
             DatabaseError: if the post or its media cannot be saved
         """
-        from .post import Post  # noqa: PLC0415
-
-        post_id = response.get("video_id")
-        if not post_id:
-            logger.warning(
-                "Skipping post of user %s: response has no video_id",
-                self.username,
-            )
-            return None
-
-        meta = response.get("meta") or {}
-        # meta.thumbnail is sometimes the video URL, so use the first media.
-        medias = response.get("medias")
-        first_media = medias[0] if isinstance(medias, list) and medias else {}
-        thumbnail_url = (
-            first_media.get("url") if isinstance(first_media, dict) else None
-        ) or ""
-        defaults = {
-            "user": self,
-            "variant": self._get_post_type(response),
-            "caption": meta.get("text") or "",
-            "thumbnail_url": thumbnail_url,
-            # credits is billing data, not post data.
-            "raw_data": {
-                key: value for key, value in response.items() if key != "credits"
-            },
-        }
-        published_at = meta.get("published_at")
-        if isinstance(published_at, (int, float)):
-            defaults["post_created_at"] = datetime.fromtimestamp(published_at, tz=UTC)
-
-        with transaction.atomic():
-            post, created = Post.objects.get_or_create(
-                id=str(post_id),
-                defaults=defaults,
-            )
-            if created:
-                post.create_media()
+        post, _ = self._save_post_from_saveapi(response)
         return post
 
     def update_posts_from_api(self):
@@ -474,7 +516,7 @@ class User(GetUserPostMixIn, GetUserStoryMixIn, ViewCountMixin):
             msg = f"username {username} is already stored on another user"
             raise SaveAPIError(PROFILE_DUPLICATE_ACCOUNT, msg)
 
-    def update_profile_from_api(self):
+    def update_profile_from_api(self, *, update_posts=True):
         """Update the user profile from SaveAPI, looked up by username."""
         response = fetch_user_profile(self.username)
 
@@ -503,5 +545,6 @@ class User(GetUserPostMixIn, GetUserStoryMixIn, ViewCountMixin):
         self.api_updated_at = timezone.now()
         self.save()
 
-        ## Queue a background task to update posts after the user profile is updated.
-        transaction.on_commit(self.update_posts_from_api_async)
+        if update_posts:
+            # Queue a background task to update posts after the profile commits.
+            transaction.on_commit(self.update_posts_from_api_async)
