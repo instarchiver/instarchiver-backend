@@ -1,10 +1,15 @@
 import logging
 import uuid
+from functools import partial
 from io import BytesIO
 
 from django.core.files.base import ContentFile
 from django.db import models
+from django.db import transaction
+from django.db.models import Exists
 from django.db.models import F
+from django.db.models import OuterRef
+from django.db.models import Prefetch
 from django.db.models import Q
 from django.utils import timezone
 from pgvector.django import VectorField
@@ -13,15 +18,22 @@ from PIL import ImageOps
 from simple_history.models import HistoricalRecords
 
 from core.utils.openrouter import generate_image_embedding
+from core.utils.saveapi import RETRYABLE_ERROR_CODES
+from core.utils.saveapi import SaveAPIError
+from core.utils.saveapi import fetch_post_detail
 from instagram.misc import get_post_media_upload_location
 from instagram.models.mixins import InstagramModerationMixin
 from instagram.models.mixins import ViewCountMixin
+from instagram.models.story import Story
 from instagram.models.story import is_video_filename
 from instagram.models.user import User
 from instagram.utils import download_file_from_url
 from instagram.utils import extract_video_frame
 from instagram.utils import generate_blur_data_url_from_image
 from instagram.utils import get_media_size
+from instagram.utils import normalize_instagram_post_url
+from instagram.utils import shortcode_to_media_id
+from instagram.utils import validate_instagram_username
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +267,22 @@ class Post(InstagramModerationMixin, ViewCountMixin):
         return len(items)
 
     @classmethod
+    def detail_queryset(cls):
+        """Return a Post queryset annotated and prefetched for post serializers."""
+        annotated_users = User.objects.annotate(
+            has_stories=Exists(Story.objects.filter(user=OuterRef("pk"))),
+            has_history=Exists(
+                User.history.model.objects.filter(uuid=OuterRef("pk")),
+            ),
+        )
+        # Rows are inserted in carousel order, so id keeps that order.
+        ordered_postmedia = PostMedia.objects.order_by("id")
+        return cls.objects.defer("raw_data", "embedding").prefetch_related(
+            Prefetch("user", queryset=annotated_users),
+            Prefetch("postmedia_set", queryset=ordered_postmedia),
+        )
+
+    @classmethod
     def increment_view_count(cls, post_id):
         """Add 1 to a post's view_count with an atomic queryset update.
 
@@ -358,6 +386,73 @@ class Post(InstagramModerationMixin, ViewCountMixin):
             "created": True,
             "media_count": media_count,
         }
+
+    @classmethod
+    def archive_from_url(cls, url: str) -> tuple["Post", bool]:
+        """Fetch an Instagram post via SaveAPI and save it cleanly."""
+        from instagram.tasks.user import auto_update_user_profile  # noqa: PLC0415
+
+        canonical_url, shortcode = normalize_instagram_post_url(url)
+        candidate_id = shortcode_to_media_id(shortcode)
+        if candidate_id:
+            existing = cls.objects.filter(id=candidate_id).first()
+            if existing is not None:
+                return existing, False
+
+        response = fetch_post_detail(canonical_url)
+        if not isinstance(response, dict):
+            msg = "SaveAPI response is not a JSON object."
+            raise TypeError(msg)
+
+        if not response.get("success"):
+            error = response.get("error") or {}
+            code = error.get("code") or "UNKNOWN"
+            raise SaveAPIError(
+                code,
+                error.get("message") or "no error message",
+                retryable=code in RETRYABLE_ERROR_CODES,
+            )
+
+        raw_id = response.get("video_id")
+        if raw_id and not isinstance(raw_id, bool):
+            existing = cls.objects.filter(id=str(raw_id)).first()
+            if existing is not None:
+                return existing, False
+
+        username = validate_instagram_username(
+            (response.get("meta") or {}).get("username"),
+        )
+        if not username:
+            msg = "SaveAPI response did not include a valid author username."
+            raise ValueError(msg)
+
+        with transaction.atomic():
+            instagram_user = (
+                User.objects.filter(username__iexact=username)
+                .order_by("created_at")
+                .first()
+            )
+            if instagram_user is None:
+                instagram_user = User(username=username)
+                # Keep stub creation out of the caller's daily add-user quota.
+                instagram_user._history_user = None  # type: ignore[attr-defined]  # noqa: SLF001
+                instagram_user.save()
+                transaction.on_commit(
+                    partial(
+                        auto_update_user_profile.delay,
+                        str(instagram_user.uuid),
+                        force=True,
+                        update_posts=False,
+                    ),
+                    robust=True,
+                )
+
+            post, created = instagram_user._save_post_from_saveapi(response)  # noqa: SLF001
+            if post is None:
+                msg = "Failed to persist archived post."
+                raise ValueError(msg)
+
+        return post, created
 
 
 class PostMedia(models.Model):

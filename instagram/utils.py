@@ -1,5 +1,6 @@
 import base64
 import logging
+import re
 from io import BytesIO
 from urllib.parse import urlparse
 
@@ -9,8 +10,13 @@ from PIL import Image as PILImage
 from rest_framework import status
 
 from core.utils.openrouter import classify
+from instagram.constants import ALLOWED_INSTAGRAM_HOSTS
+from instagram.constants import INSTAGRAM_SHORTCODE_ALPHABET
 from instagram.constants import INSTAGRAM_URL_CATEGORIES
 from instagram.constants import INSTAGRAM_URL_QUESTION
+from instagram.constants import INSTAGRAM_USERNAME_RE
+from instagram.constants import MAX_STANDARD_SHORTCODE_LEN
+from instagram.constants import RESERVED_INSTAGRAM_SEGMENTS
 
 logger = logging.getLogger(__name__)
 
@@ -148,3 +154,117 @@ def categorize_instagram_url(url: str) -> str:
         question=INSTAGRAM_URL_QUESTION,
         categories=INSTAGRAM_URL_CATEGORIES,
     )
+
+
+_POST_PATH_RE = re.compile(r"\A/(?:p|reel|reels|tv)/(?P<code>[A-Za-z0-9_-]+)/?\Z")
+_USER_POST_PATH_RE = re.compile(
+    r"\A/(?P<username>[^/]+)/(?:p|reel|reels|tv)/(?P<code>[A-Za-z0-9_-]+)/?\Z",
+)
+_SHARE_PATH_RE = re.compile(
+    r"\A/share/(?:(?P<kind>p|reel)/)?(?P<code>[A-Za-z0-9_-]+)/?\Z",
+)
+
+
+def validate_instagram_username(raw: object) -> str | None:
+    """Return a normalized Instagram username, or None if invalid."""
+    if not isinstance(raw, str):
+        return None
+    candidate = raw.strip()
+    if candidate.startswith("@"):
+        candidate = candidate[1:]
+    if (
+        not candidate
+        or ".." in candidate
+        or candidate.lower() in RESERVED_INSTAGRAM_SEGMENTS
+        or not INSTAGRAM_USERNAME_RE.fullmatch(candidate)
+    ):
+        return None
+    return candidate.lower()
+
+
+def _is_valid_instagram_url_netloc(parsed) -> bool:
+    """Return True if parsed URL uses HTTP(S) on an Instagram host."""
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in {"http", "https"}
+        and bool(parsed.hostname)
+        and parsed.hostname.lower() in ALLOWED_INSTAGRAM_HOSTS
+        and not parsed.username
+        and not parsed.password
+        and port is None
+    )
+
+
+def normalize_instagram_post_url(url: str) -> tuple[str, str | None]:
+    """Validate and normalize an Instagram post or reel URL.
+
+    Returns:
+        tuple: (canonical_url, shortcode_or_none)
+
+    Raises:
+        TypeError: if url is not a string
+        ValueError: if the URL is not a supported Instagram post URL
+    """
+    if not isinstance(url, str):
+        msg = "URL must be a string."
+        raise TypeError(msg)
+
+    cleaned = url.strip()
+    if not cleaned or any(ch in cleaned for ch in ("\r", "\n", "\t")):
+        msg = "Enter a valid Instagram post or reel URL."
+        raise ValueError(msg)
+
+    parsed = urlparse(cleaned)
+    if not _is_valid_instagram_url_netloc(parsed):
+        msg = "Enter a valid Instagram post or reel URL."
+        raise ValueError(msg)
+
+    path = parsed.path
+    clean_path = path if path.endswith("/") else f"{path}/"
+    canonical_url = f"https://www.instagram.com{clean_path}"
+
+    match = _POST_PATH_RE.fullmatch(path)
+    if match:
+        return canonical_url, match.group("code")
+
+    match = _SHARE_PATH_RE.fullmatch(path)
+    if match:
+        if (
+            match.group("kind") is None
+            and match.group("code").lower() in RESERVED_INSTAGRAM_SEGMENTS
+        ):
+            msg = "Enter a valid Instagram post or reel URL."
+            raise ValueError(msg)
+        return canonical_url, None
+
+    match = _USER_POST_PATH_RE.fullmatch(path)
+    if match:
+        username = validate_instagram_username(match.group("username"))
+        if username is None:
+            msg = "Enter a valid Instagram post or reel URL."
+            raise ValueError(msg)
+        return canonical_url, match.group("code")
+
+    msg = "Only Instagram post and reel URLs are supported."
+    raise ValueError(msg)
+
+
+def shortcode_to_media_id(shortcode: str | None) -> str | None:
+    """Decode an Instagram post shortcode into its numeric media PK."""
+    if (
+        not isinstance(shortcode, str)
+        or not 1 <= len(shortcode) <= MAX_STANDARD_SHORTCODE_LEN
+    ):
+        return None
+
+    media_id = 0
+    for char in shortcode:
+        index = INSTAGRAM_SHORTCODE_ALPHABET.find(char)
+        if index == -1:
+            return None
+        media_id = media_id * 64 + index
+
+    return str(media_id) if media_id > 0 else None

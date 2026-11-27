@@ -1,3 +1,5 @@
+import re
+
 URL_CATEGORY_STORY = "story"
 URL_CATEGORY_POST = "post"
 URL_CATEGORY_UNKNOWN = "unknown"
@@ -39,3 +41,35 @@ LIST_USER_DEFERRED = ("original_profile_picture_url", "raw_api_data", "view_coun
 
 # User columns left out by InstagramUserDetailSerializer
 DETAIL_USER_DEFERRED = ("raw_api_data", "view_count")
+
+# Allowed hosts, segments, and patterns for Instagram post URL validation
+ALLOWED_INSTAGRAM_HOSTS = frozenset(
+    {
+        "instagram.com",
+        "www.instagram.com",
+        "m.instagram.com",
+        "instagr.am",
+    },
+)
+RESERVED_INSTAGRAM_SEGMENTS = frozenset(
+    {
+        "p",
+        "reel",
+        "reels",
+        "tv",
+        "stories",
+        "explore",
+        "accounts",
+        "direct",
+        "share",
+        "audio",
+        "highlights",
+    },
+)
+INSTAGRAM_USERNAME_RE = re.compile(
+    r"\A[A-Za-z0-9](?:[A-Za-z0-9._]{0,28}[A-Za-z0-9])?\Z",
+)
+INSTAGRAM_SHORTCODE_ALPHABET = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+)
+MAX_STANDARD_SHORTCODE_LEN = 28

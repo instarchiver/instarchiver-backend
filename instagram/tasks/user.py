@@ -280,13 +280,14 @@ def update_user_posts_from_api(self, user_id):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def auto_update_user_profile(self, user_id, *, force=False):
+def auto_update_user_profile(self, user_id, *, force=False, update_posts=True):
     """
     Update a specific user's profile from SaveAPI if auto-update is enabled.
 
     Args:
         user_id (str): UUID of the user to update
         force (bool): skip the allow_auto_update_profile check
+        update_posts (bool): queue post scraping after saving the profile
 
     Returns:
         dict: Operation result with success status and details
@@ -309,7 +310,7 @@ def auto_update_user_profile(self, user_id, *, force=False):
         }
 
     try:
-        user.update_profile_from_api()
+        user.update_profile_from_api(update_posts=update_posts)
         logger.info("Successfully updated profile for user: %s", user.username)
 
         return {  # noqa: TRY300
@@ -327,9 +328,12 @@ def auto_update_user_profile(self, user_id, *, force=False):
             and e.retry_after
             and not self.request.is_eager
         ):
+            requeue_kwargs = {"force": force}
+            if not update_posts:
+                requeue_kwargs["update_posts"] = False
             self.apply_async(
                 args=[str(user.uuid)],
-                kwargs={"force": force},
+                kwargs=requeue_kwargs,
                 countdown=e.retry_after,
             )
             logger.warning(
