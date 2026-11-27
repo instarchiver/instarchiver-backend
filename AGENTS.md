@@ -300,9 +300,9 @@ The download utility `download_file_from_url()` is in [core/utils/download.py](c
 ### Authentication
 
 **Firebase Integration** ([authentication/firebase.py](authentication/firebase.py)):
-- Loads service account JSON from `FirebaseAdminSetting` database model
-- Dynamically reloads credentials when changed
-- Handles app re-initialization for configuration updates
+- Loads service account JSON from `FirebaseAdminSetting` and caches a named `firebase_admin.App` per SHA-256 hash of `service_account_json` with thread-safe initialization
+- Keeps older named app instances alive when credentials rotate so concurrent requests on other threads do not fail
+- Reads user details directly from verified `decoded_token` claims (`check_revoked=False`) and skips `auth.get_user()`
 
 ### Testing Strategy
 

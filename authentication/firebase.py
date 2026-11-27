@@ -1,4 +1,6 @@
+import hashlib
 import json
+import threading
 from typing import Any
 
 import firebase_admin
@@ -6,9 +8,11 @@ from django.core.exceptions import ImproperlyConfigured
 from firebase_admin import auth
 from firebase_admin import credentials
 
+_app_lock = threading.Lock()
 
-def _get_firebase_credentials():
-    """Get Firebase credentials from database settings."""
+
+def _get_service_account_json() -> str:
+    """Return the configured Firebase service account JSON string."""
     try:
         from settings.models import FirebaseAdminSetting  # noqa: PLC0415
     except ImportError as e:
@@ -21,52 +25,62 @@ def _get_firebase_credentials():
         msg = "Cannot access Firebase settings"
         raise ImproperlyConfigured(msg) from e
 
-    if firebase_settings.service_account_json:
+    raw_json = firebase_settings.service_account_json
+    if not isinstance(raw_json, str) or not raw_json.strip():
+        msg = "Firebase service account JSON content not configured"
+        raise ImproperlyConfigured(msg)
+
+    return raw_json
+
+
+def _get_firebase_app() -> firebase_admin.App:
+    """Return a cached Firebase App keyed by the service account JSON hash."""
+    service_account_json = _get_service_account_json()
+    digest = hashlib.sha256(service_account_json.encode("utf-8")).hexdigest()
+    app_name = f"firebase-{digest}"
+
+    try:
+        return firebase_admin.get_app(app_name)
+    except ValueError:
+        pass
+
+    with _app_lock:
         try:
-            service_account_data = json.loads(firebase_settings.service_account_json)
-            return credentials.Certificate(service_account_data)
-        except (json.JSONDecodeError, ValueError) as e:
+            return firebase_admin.get_app(app_name)
+        except ValueError:
+            pass
+
+        try:
+            service_account_data = json.loads(service_account_json)
+        except (json.JSONDecodeError, TypeError) as e:
             msg = "Invalid Firebase service account JSON content"
             raise ImproperlyConfigured(msg) from e
 
-    msg = "Firebase service account JSON content not configured"
-    raise ImproperlyConfigured(msg)
+        if not isinstance(service_account_data, dict):
+            msg = "Invalid Firebase service account JSON content"
+            raise ImproperlyConfigured(msg)
 
+        try:
+            cred = credentials.Certificate(service_account_data)
+        except (ValueError, TypeError) as e:
+            msg = "Invalid Firebase service account JSON content"
+            raise ImproperlyConfigured(msg) from e
 
-def _get_firebase_app():
-    """Get Firebase app with real-time configuration from database."""
-    # Get credentials from database - will raise ImproperlyConfigured if not available
-    cred = _get_firebase_credentials()
-
-    # Try to get existing default app first
-    try:
-        app = firebase_admin.get_app()
-        # Delete existing app to reload with fresh configuration
-        firebase_admin.delete_app(app)
-    except ValueError:
-        # No existing app, proceed with creating new one
-        pass
-
-    # Initialize with fresh credentials from database
-    return firebase_admin.initialize_app(cred)
+        # Keep old named apps alive so concurrent requests on other threads do not fail.
+        return firebase_admin.initialize_app(cred, name=app_name)
 
 
 def validate_token(token: str) -> dict[str, Any]:
-    """
-    Validate and decode a Firebase authentication token.
-
-    This function verifies the validity of a Firebase ID token and returns
-    the decoded payload.
+    """Verify a Firebase ID token and return its decoded claims.
 
     Args:
-        token (str): The Firebase ID token to validate.
+        token: Firebase ID token string.
 
     Returns:
-        dict: The decoded token payload containing user information like
-        UID, email, etc.
+        Decoded token payload containing claims such as uid and email.
 
     Raises:
-        Exception: If the token is invalid or verification fails.
+        Exception: If token verification fails.
     """
     app = _get_firebase_app()
     try:
@@ -77,34 +91,39 @@ def validate_token(token: str) -> dict[str, Any]:
 
 
 def get_user_info(token: str) -> dict[str, Any]:
-    """
-    Retrieves user information from a Firebase authentication token.
-
-    This function verifies the provided token, extracts the user ID (uid),
-    fetches the user information from Firebase, and formats the user's details.
+    """Verify a Firebase ID token and extract user details from its claims.
 
     Args:
-        token (str): The Firebase authentication token to verify.
+        token: Firebase ID token string.
 
     Returns:
-        dict: A dictionary containing the user's information with the following keys:
-            - uid (str): The user's unique identifier.
-            - email (str): The user's email address.
-            - name (str): The user's full name from display_name.
-            - photo_url (str): The URL to the user's profile photo.
+        Dictionary with uid, email, email_verified, name, and photo_url.
 
     Raises:
-        Exception: If the token is invalid or there's an issue with
-        Firebase authentication.
+        ValueError: If the verified token has no non-empty uid claim.
+        Exception: If token verification fails.
     """
     app = _get_firebase_app()
+    # Keep check_revoked=False: True invokes auth.get_user synchronously.
     decoded_token = auth.verify_id_token(token, app=app)
-    uid = decoded_token["uid"]
-    user = auth.get_user(uid, app=app)
+
+    raw_uid = decoded_token.get("uid")
+    uid = raw_uid.strip() if isinstance(raw_uid, str) else ""
+    if not uid:
+        msg = "Token missing uid claim"
+        raise ValueError(msg)
+
+    raw_email = decoded_token.get("email")
+    email = raw_email.strip() if isinstance(raw_email, str) else ""
+    raw_name = decoded_token.get("name")
+    name = raw_name.strip() if isinstance(raw_name, str) else ""
+    raw_picture = decoded_token.get("picture")
+    photo_url = raw_picture.strip() if isinstance(raw_picture, str) else ""
 
     return {
-        "uid": user.uid,
-        "email": user.email,
-        "name": user.display_name or "",
-        "photo_url": user.photo_url,
+        "uid": uid,
+        "email": email or None,
+        "email_verified": decoded_token.get("email_verified") is True,
+        "name": name,
+        "photo_url": photo_url,
     }
