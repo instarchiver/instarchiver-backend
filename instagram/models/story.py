@@ -4,6 +4,7 @@ import uuid
 from django.core.files.base import ContentFile
 from django.db import models
 from django.utils import timezone
+from pgvector.django import HnswIndex
 from pgvector.django import VectorField
 
 from core.utils.openai import moderate_image_content
@@ -60,7 +61,16 @@ class Story(InstagramModerationMixin, ViewCountMixin):
     class Meta:
         verbose_name = "Story"
         verbose_name_plural = "Stories"
-        indexes = [models.Index(fields=["created_at"], name="story_created_at_idx")]
+        indexes = [
+            models.Index(fields=["created_at"], name="story_created_at_idx"),
+            HnswIndex(
+                name="story_embedding_hnsw_idx",
+                fields=["embedding"],
+                m=16,
+                ef_construction=64,
+                opclasses=["vector_l2_ops"],
+            ),
+        ]
 
     def __str__(self):
         return f"{self.user.username} - {self.story_id}"

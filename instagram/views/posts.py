@@ -21,7 +21,7 @@ from instagram.models import Story
 from instagram.models import User as InstagramUser
 from instagram.paginations import PostAISearchCursorPagination
 from instagram.paginations import PostCursorPagination
-from instagram.paginations import PostSimilarPageNumberPagination
+from instagram.paginations import SimilarPagination
 from instagram.serializers.posts import PostDetailSerializer
 from instagram.serializers.posts import PostListSerializer
 from instagram.tasks.post import increment_post_view_count
@@ -173,7 +173,7 @@ class PostSimilarView(ListAPIView):
     """Get similar posts based on embedding similarity using L2Distance."""
 
     serializer_class = PostListSerializer
-    pagination_class = PostSimilarPageNumberPagination
+    pagination_class = SimilarPagination
     permission_classes = [IsAuthenticatedOrReadOnly]
 
     @extend_schema(
@@ -184,48 +184,35 @@ class PostSimilarView(ListAPIView):
         ),
         responses={
             200: PostListSerializer(many=True),
-            404: OpenApiResponse(description="Post not found"),
+            404: OpenApiResponse(description="Invalid or out-of-range page"),
         },
     )
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
-        # Get the post ID from URL parameter
         post_id = self.kwargs.get("id")
-
-        # Get the source post and its embedding
-        try:
-            source_post = Post.objects.get(id=post_id)
-        except Post.DoesNotExist:
+        embedding = (
+            Post.objects.filter(id=post_id).values_list("embedding", flat=True).first()
+        )
+        if embedding is None:
             return Post.objects.none()
 
-        # If source post has no embedding, return empty queryset
-        if source_post.embedding is None:
-            return Post.objects.none()
-
-        # Annotate users with has_stories and has_history
         annotated_users = InstagramUser.objects.annotate(
             has_stories=Exists(Story.objects.filter(user=OuterRef("pk"))),
             has_history=Exists(
                 InstagramUser.history.model.objects.filter(uuid=OuterRef("pk")),
             ),
         )
-
-        # Rows are inserted in carousel order, so id keeps that order
         ordered_postmedia = PostMedia.objects.order_by("id")
 
-        # Find similar posts using L2Distance
         return (
             Post.objects.filter(embedding__isnull=False)
             .defer("raw_data", "embedding")
-            .exclude(id=post_id)  # Exclude the source post itself
+            .exclude(id=post_id)
             .prefetch_related(
                 Prefetch("user", queryset=annotated_users),
                 Prefetch("postmedia_set", queryset=ordered_postmedia),
             )
-            .annotate(
-                similarity_score=1 - L2Distance("embedding", source_post.embedding),
-            )
-            .order_by("-similarity_score")
+            .order_by(L2Distance("embedding", embedding), "id")
         )

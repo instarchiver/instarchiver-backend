@@ -1,8 +1,12 @@
 from unittest.mock import patch
 
 from django.core.cache import cache
+from django.db import connection
+from django.db import transaction
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from pgvector.django import L2Distance
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -1089,10 +1093,10 @@ class PostSimilarViewTest(TestCase):
 
         assert response.status_code == status.HTTP_200_OK
         assert "results" in response.data
-        assert "count" in response.data
+        assert "count" not in response.data
         assert "next" in response.data
         assert "previous" in response.data
-        assert response.data["count"] == 25  # noqa: PLR2004
+        assert "page=2" in response.data["next"]
         assert len(response.data["results"]) == 20  # noqa: PLR2004 (default page size)
 
     def test_similar_posts_custom_page_size(self):
@@ -1238,8 +1242,8 @@ class PostSimilarViewTest(TestCase):
 
         assert response.status_code == status.HTTP_200_OK
 
-        # Check page number pagination structure
-        assert "count" in response.data
+        # Check non-counting pagination structure
+        assert "count" not in response.data
         assert "next" in response.data
         assert "previous" in response.data
         assert "results" in response.data
@@ -1332,3 +1336,152 @@ class PostSimilarViewTest(TestCase):
         usernames = {post["user"]["username"] for post in results}
         assert "user1" in usernames
         assert "user2" in usernames
+
+    def test_similar_posts_no_count_query_and_direct_l2_order(self):
+        """PostSimilarView runs no COUNT(*) and orders directly by <-> operator."""
+        user = InstagramUserFactory(username="testuser")
+        source_post = PostFactory(
+            user=user,
+            embedding=[0.1] * 1536,
+            raw_data={"a": 1},
+        )
+        PostFactory(user=user, embedding=[0.2] * 1536, raw_data={"b": 2})
+
+        url = reverse("instagram:post_similar", kwargs={"id": source_post.id})
+        with CaptureQueriesContext(connection) as ctx:
+            response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        sqls = [q["sql"] for q in ctx.captured_queries]
+        assert not any("COUNT(*)" in sql.upper() for sql in sqls)
+
+        rank_queries = [sql for sql in sqls if "<->" in sql]
+        assert len(rank_queries) == 1
+        rank_sql = rank_queries[0]
+        assert "1 -" not in rank_sql
+        assert "DESC" not in rank_sql.upper().split("ORDER BY", 1)[1]
+        select_part = rank_sql.split(" FROM ", 1)[0]
+        assert '"raw_data"' not in select_part
+        assert '"embedding"' not in select_part
+
+        lookup_queries = [
+            sql for sql in sqls if 'FROM "instagram_post"' in sql and "<->" not in sql
+        ]
+        assert len(lookup_queries) == 1
+        assert '"raw_data"' not in lookup_queries[0].split(" FROM ", 1)[0]
+
+    def test_similar_posts_ordering_by_distance(self):
+        """Posts with closer embeddings appear before farther posts."""
+        user = InstagramUserFactory(username="testuser")
+        source_post = PostFactory(user=user, embedding=[0.0] * 1536)
+        far_post = PostFactory(user=user, embedding=[1.0] * 1536)
+        near_post = PostFactory(user=user, embedding=[0.05] * 1536)
+
+        url = reverse("instagram:post_similar", kwargs={"id": source_post.id})
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        ids = [item["id"] for item in response.data["results"]]
+        assert ids == [near_post.id, far_post.id]
+
+    def test_similar_posts_pagination_edge_cases(self):
+        """Invalid, out-of-range, and capped pages return 404 or proper links."""
+        user = InstagramUserFactory(username="testuser")
+        source_post = PostFactory(user=user, embedding=[0.1] * 1536)
+        for _ in range(25):
+            PostFactory(user=user, embedding=[0.2] * 1536)
+
+        url = reverse("instagram:post_similar", kwargs={"id": source_post.id})
+        for bad_page in ("0", "-1", "abc", "last", "3", "11"):
+            resp = self.client.get(url, {"page": bad_page})
+            assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+        page2 = self.client.get(url, {"page": 2, "page_size": 10})
+        assert page2.status_code == status.HTTP_200_OK
+        assert "page=" not in page2.data["previous"]
+
+        page3 = self.client.get(url, {"page": 3, "page_size": 10})
+        assert page3.status_code == status.HTTP_200_OK
+        assert "page=2" in page3.data["previous"]
+
+    def test_similar_posts_max_results_cap(self):
+        """Pagination caps total reachable results at max_results (200)."""
+        user = InstagramUserFactory(username="testuser")
+        source_post = PostFactory(user=user, embedding=[0.1] * 1536)
+        for i in range(205):
+            PostFactory(
+                user=user,
+                embedding=[float(i + 1) / 1000.0] + [0.0] * 1535,
+            )
+
+        url = reverse("instagram:post_similar", kwargs={"id": source_post.id})
+        page2 = self.client.get(url, {"page": 2, "page_size": 100})
+        assert page2.status_code == status.HTTP_200_OK
+        assert len(page2.data["results"]) == 100  # noqa: PLR2004
+        assert page2.data["next"] is None
+
+        page3 = self.client.get(url, {"page": 3, "page_size": 100})
+        assert page3.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_similar_posts_over_40_distinct_embeddings(self):
+        """Paging beyond ef_search=40 returns all distinct posts without duplicates."""
+        user = InstagramUserFactory(username="testuser")
+        source_post = PostFactory(user=user, embedding=[0.0] * 1536)
+        for i in range(1, 61):
+            PostFactory(
+                user=user,
+                embedding=[float(i) / 100.0] + [0.0] * 1535,
+            )
+
+        url = reverse("instagram:post_similar", kwargs={"id": source_post.id})
+        resp_50 = self.client.get(url, {"page_size": 50})
+        assert resp_50.status_code == status.HTTP_200_OK
+        assert len(resp_50.data["results"]) == 50  # noqa: PLR2004
+        assert resp_50.data["next"] is not None
+
+        seen_ids = []
+        for page in (1, 2, 3):
+            resp = self.client.get(url, {"page": page, "page_size": 20})
+            assert resp.status_code == status.HTTP_200_OK
+            seen_ids.extend(item["id"] for item in resp.data["results"])
+
+        assert len(seen_ids) == 60  # noqa: PLR2004
+        assert len(set(seen_ids)) == 60  # noqa: PLR2004
+
+    def test_similar_posts_over_40_identical_embeddings(self):
+        """Paging through >40 tied embeddings yields deterministic PK order."""
+        user = InstagramUserFactory(username="testuser")
+        source_post = PostFactory(user=user, embedding=[0.0] * 1536)
+        tied_ids = sorted(
+            PostFactory(user=user, embedding=[0.1] * 1536).id for _ in range(60)
+        )
+        for i in range(10):
+            PostFactory(
+                user=user,
+                embedding=[float(i + 5)] + [0.0] * 1535,
+            )
+
+        url = reverse("instagram:post_similar", kwargs={"id": source_post.id})
+        seen_ids = []
+        for page in (1, 2, 3):
+            resp = self.client.get(url, {"page": page, "page_size": 20})
+            assert resp.status_code == status.HTTP_200_OK
+            seen_ids.extend(item["id"] for item in resp.data["results"])
+
+        assert seen_ids == tied_ids
+
+    def test_similar_posts_uses_hnsw_index_explain(self):
+        """The similarity queryset can use post_embedding_hnsw_idx."""
+        qs = (
+            Post.objects.filter(embedding__isnull=False)
+            .defer("raw_data", "embedding")
+            .exclude(id="missing")
+            .order_by(L2Distance("embedding", [0.1] * 1536), "id")[:21]
+        )
+        sql, params = qs.query.sql_with_params()
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute("SET LOCAL enable_seqscan = off")
+            cursor.execute(f"EXPLAIN {sql}", params)
+            plan = "\n".join(row[0] for row in cursor.fetchall())
+
+        assert "post_embedding_hnsw_idx" in plan

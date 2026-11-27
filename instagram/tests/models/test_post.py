@@ -8,6 +8,7 @@ from django.core.files.base import ContentFile
 from django.core.files.storage import InMemoryStorage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from pgvector.django import HnswIndex
 from PIL import Image
 
 from instagram.models import Post
@@ -45,6 +46,18 @@ class TestPostModel(TestCase):
 
         assert post.user.username is not None
         assert post.user.instagram_id is not None
+
+    def test_embedding_hnsw_index_defined(self):
+        """Post.Meta.indexes defines an HnswIndex for vector_l2_ops."""
+        indexes = Post._meta.indexes  # noqa: SLF001
+        hnsw_indexes = [idx for idx in indexes if isinstance(idx, HnswIndex)]
+        assert len(hnsw_indexes) == 1
+        idx = hnsw_indexes[0]
+        assert idx.name == "post_embedding_hnsw_idx"
+        assert idx.fields == ["embedding"]
+        assert idx.opclasses == ["vector_l2_ops"]
+        assert idx.m == 16  # noqa: PLR2004
+        assert idx.ef_construction == 64  # noqa: PLR2004
 
 
 class TestPostMediaModel(TestCase):
