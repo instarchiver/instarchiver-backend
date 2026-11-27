@@ -44,7 +44,7 @@ django-unfold==0.110.1  # https://pypi.org/project/django-unfold/
 django-solo==2.7.0  # https://github.com/lazybird/django-solo
 
 #OpenAI
-openai==3.57.0  # https://pypi.org/project/openai/
+openai==3.58.0  # https://pypi.org/project/openai/
 
 # Firebase Admin
 firebase-admin==7.8.0  # https://pypi.org/project/firebase-admin/
